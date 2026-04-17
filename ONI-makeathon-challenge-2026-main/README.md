@@ -27,6 +27,15 @@ If you are new to the repository, use these files in this order:
 Create the virtual environment and install the dependencies:
 
 ```bash
+python3.10 -m venv .venv
+. .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+```
+
+Or use the Makefile shortcut:
+
+```bash
 make install
 ```
 
