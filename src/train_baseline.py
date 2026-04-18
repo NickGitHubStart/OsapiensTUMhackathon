@@ -54,14 +54,14 @@ def _load_tile_labels(data_dir: Path, tile_id: str, ref_profile: dict) -> TileLa
     radd_r = _reproject_to_match(radd_labels, ref_profile)
 
     # GLAD-S2: day offset since 2019-01-01
-    glads2_date = pd.Timestamp("2019-01-01") + pd.to_timedelta(glads2_date_r, unit="D")
-    glads2_pos = (glads2_alert_r >= 2) & (glads2_date >= pd.Timestamp("2020-01-01"))
+    glads2_date = np.datetime64("2019-01-01") + glads2_date_r.astype("timedelta64[D]")
+    glads2_pos = (glads2_alert_r >= 2) & (glads2_date >= np.datetime64("2020-01-01"))
 
     # RADD: confidence digit * 10000 + days since 2014-12-31
     radd_conf = radd_r // 10000
     radd_days = radd_r % 10000
-    radd_date = pd.Timestamp("2014-12-31") + pd.to_timedelta(radd_days, unit="D")
-    radd_pos = (radd_conf >= 2) & (radd_date >= pd.Timestamp("2020-01-01"))
+    radd_date = np.datetime64("2014-12-31") + radd_days.astype("timedelta64[D]")
+    radd_pos = (radd_conf >= 2) & (radd_date >= np.datetime64("2020-01-01"))
 
     positive = glads2_pos & radd_pos
     negative = (glads2_alert_r == 0) & (radd_r == 0)
