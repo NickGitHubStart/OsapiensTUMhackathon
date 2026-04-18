@@ -148,6 +148,10 @@ def main() -> None:
     tiles = _collect_tiles(data_dir, args.split)
 
     all_features: list[dict] = []
+    total_features = 0
+    tiles_with_features = 0
+    tiles_written = 0
+    tiles_skipped = 0
 
     for tile_id in tiles:
         years = _available_years(aef_dir, tile_id)
@@ -214,22 +218,48 @@ def main() -> None:
 
         if apply_postprocess:
             pred = postprocess_prediction(pred, ref_profile["transform"], min_area_ha=args.min_area_ha)
-            geojson = _write_geojson(pred, ref_profile, out_dir / f"{tile_id}.geojson", min_area_ha=0.0)
+            min_area_ha = 0.0
         else:
-            geojson = _write_geojson(pred, ref_profile, out_dir / f"{tile_id}.geojson", min_area_ha=args.min_area_ha)
+            min_area_ha = args.min_area_ha
+
+        try:
+            geojson = _write_geojson(pred, ref_profile, out_dir / f"{tile_id}.geojson", min_area_ha=min_area_ha)
+        except ValueError as exc:
+            logger.warning("%s: %s", tile_id, exc)
+            tiles_skipped += 1
+            continue
+
+        features = geojson.get("features", [])
+        n_features = len(features)
+        total_features += n_features
+        if n_features > 0:
+            tiles_with_features += 1
+        tiles_written += 1
 
         if args.merge_out:
-            for feature in geojson.get("features", []):
-                all_features.append(feature)
+            all_features.extend(features)
 
         logger.info("Wrote %s", out_dir / f"{tile_id}.geojson")
 
     if args.merge_out:
+        if not all_features:
+            raise RuntimeError(
+                "Merged GeoJSON has zero features. "
+                "Lower --threshold or --min-area-ha, or inspect per-tile outputs."
+            )
         merged = {"type": "FeatureCollection", "features": all_features}
         merged_path = Path(args.merge_out)
         merged_path.parent.mkdir(parents=True, exist_ok=True)
         merged_path.write_text(json.dumps(merged))
         logger.info("Wrote merged GeoJSON to %s", merged_path)
+
+    logger.info(
+        "Tiles: %d written, %d skipped; features: %d total across %d tiles",
+        tiles_written,
+        tiles_skipped,
+        total_features,
+        tiles_with_features,
+    )
 
 
 if __name__ == "__main__":
