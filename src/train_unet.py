@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from collections import deque
 from pathlib import Path
@@ -361,6 +362,9 @@ def main() -> None:
     model = UNetSmall(in_channels=in_channels).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
+    last_train_loss = 0.0
+    last_val_loss = 0.0
+
     for epoch in range(1, args.epochs + 1):
         model.train()
         train_loss = 0.0
@@ -389,11 +393,28 @@ def main() -> None:
                 loss = _masked_bce_logits(logits, labels, mask)
                 val_loss += loss.item()
         val_loss /= max(1, len(val_loader))
+        last_train_loss = float(train_loss)
+        last_val_loss = float(val_loss)
 
         logger.info("Epoch %d/%d - train %.4f - val %.4f", epoch, args.epochs, train_loss, val_loss)
 
     torch.save(model.state_dict(), model_out)
     logger.info("Saved model to %s", model_out)
+
+    report_path = model_out.with_suffix(".json")
+    payload = {
+        "script": "train_unet.py",
+        "data_dir": str(data_dir),
+        "model_out": str(model_out),
+        "args": vars(args),
+        "metrics": {
+            "train_loss": last_train_loss,
+            "val_loss": last_val_loss,
+            "epochs": int(args.epochs),
+        },
+    }
+    report_path.write_text(json.dumps(payload, indent=2))
+    logger.info("Saved report to %s", report_path)
 
 
 if __name__ == "__main__":
