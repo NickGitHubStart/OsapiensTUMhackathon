@@ -99,3 +99,97 @@ def build_label_mask(labels: TileLabels) -> np.ndarray:
     mask[labels.negative] = 0
     mask[labels.positive] = 1
     return mask
+
+
+def apply_feature_noise(features: np.ndarray, rng: np.random.Generator, sigma: float) -> np.ndarray:
+    if sigma <= 0:
+        return features
+    return features + rng.normal(0.0, sigma, size=features.shape).astype(features.dtype)
+
+
+def apply_feature_channel_dropout(
+    features: np.ndarray, rng: np.random.Generator, drop_prob: float, drop_frac: float
+) -> np.ndarray:
+    if drop_prob <= 0 or drop_frac <= 0:
+        return features
+
+    if rng.random() >= drop_prob:
+        return features
+
+    n_features = features.shape[1]
+    n_drop = max(1, int(n_features * drop_frac))
+    drop_idx = rng.choice(n_features, size=n_drop, replace=False)
+    features = features.copy()
+    features[:, drop_idx] = 0.0
+    return features
+
+
+def _resize_nearest(arr: np.ndarray, out_h: int, out_w: int) -> np.ndarray:
+    _, in_h, in_w = arr.shape
+    if in_h == out_h and in_w == out_w:
+        return arr
+
+    y_idx = (np.linspace(0, in_h - 1, out_h)).round().astype(int)
+    x_idx = (np.linspace(0, in_w - 1, out_w)).round().astype(int)
+    return arr[:, y_idx][:, :, x_idx]
+
+
+def apply_spatial_aug(
+    patch: np.ndarray,
+    label: np.ndarray | None,
+    rng: np.random.Generator,
+    flip_rotate_prob: float,
+    scale_min: float,
+    scale_max: float,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    if flip_rotate_prob > 0 and rng.random() < flip_rotate_prob:
+        k = int(rng.integers(0, 4))
+        patch = np.rot90(patch, k=k, axes=(1, 2))
+        if label is not None:
+            label = np.rot90(label, k=k, axes=(0, 1))
+
+        if rng.random() < 0.5:
+            patch = patch[:, :, ::-1]
+            if label is not None:
+                label = label[:, ::-1]
+        if rng.random() < 0.5:
+            patch = patch[:, ::-1, :]
+            if label is not None:
+                label = label[::-1, :]
+
+    if scale_max > 1.0 or scale_min < 1.0:
+        scale = float(rng.uniform(scale_min, scale_max))
+        _, h, w = patch.shape
+        crop_h = max(1, min(h, int(round(h / scale))))
+        crop_w = max(1, min(w, int(round(w / scale))))
+        y0 = int(rng.integers(0, h - crop_h + 1))
+        x0 = int(rng.integers(0, w - crop_w + 1))
+        patch = patch[:, y0 : y0 + crop_h, x0 : x0 + crop_w]
+        patch = _resize_nearest(patch, h, w)
+        if label is not None:
+            label = label[y0 : y0 + crop_h, x0 : x0 + crop_w]
+            label = _resize_nearest(label[None, ...], h, w)[0]
+
+    return patch, label
+
+
+def apply_patch_noise(patch: np.ndarray, rng: np.random.Generator, sigma: float) -> np.ndarray:
+    if sigma <= 0:
+        return patch
+    return patch + rng.normal(0.0, sigma, size=patch.shape).astype(patch.dtype)
+
+
+def apply_patch_channel_dropout(
+    patch: np.ndarray, rng: np.random.Generator, drop_prob: float, drop_frac: float
+) -> np.ndarray:
+    if drop_prob <= 0 or drop_frac <= 0:
+        return patch
+    if rng.random() >= drop_prob:
+        return patch
+
+    n_channels = patch.shape[0]
+    n_drop = max(1, int(n_channels * drop_frac))
+    drop_idx = rng.choice(n_channels, size=n_drop, replace=False)
+    patch = patch.copy()
+    patch[drop_idx, :, :] = 0.0
+    return patch

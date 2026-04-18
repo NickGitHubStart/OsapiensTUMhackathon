@@ -13,7 +13,13 @@ from sklearn.metrics import classification_report
 from xgboost import XGBClassifier
 import joblib
 
-from src.data_utils import iter_aef_files, label_tile_ids, load_tile_labels
+from src.data_utils import (
+    apply_feature_channel_dropout,
+    apply_feature_noise,
+    iter_aef_files,
+    label_tile_ids,
+    load_tile_labels,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -62,6 +68,24 @@ def main() -> None:
         help="Random seed",
     )
     parser.add_argument(
+        "--aug-noise-std",
+        type=float,
+        default=0.0,
+        help="Gaussian noise std for feature augmentation",
+    )
+    parser.add_argument(
+        "--aug-dropout-prob",
+        type=float,
+        default=0.0,
+        help="Probability of feature channel dropout",
+    )
+    parser.add_argument(
+        "--aug-dropout-frac",
+        type=float,
+        default=0.1,
+        help="Fraction of channels to drop when applying dropout",
+    )
+    parser.add_argument(
         "--model-out",
         default="./artifacts/baseline_aef_logreg.joblib",
         help="Where to save the trained model",
@@ -75,6 +99,7 @@ def main() -> None:
 
     xs: list[np.ndarray] = []
     ys: list[np.ndarray] = []
+    rng = np.random.default_rng(args.seed)
 
     label_tiles = label_tile_ids(data_dir / "labels" / "train")
     logger.info("Label tiles available: %d", len(label_tiles))
@@ -117,12 +142,15 @@ def main() -> None:
             )
             continue
 
-        rng = np.random.default_rng(args.seed)
         n_pos = pos_features.shape[0]
         n_neg = min(neg_features.shape[0], n_pos * args.neg_pos_ratio)
         neg_sel = rng.choice(neg_features.shape[0], size=n_neg, replace=False)
 
         x = np.concatenate([pos_features, neg_features[neg_sel]], axis=0)
+        x = apply_feature_noise(x, rng, args.aug_noise_std)
+        x = apply_feature_channel_dropout(
+            x, rng, args.aug_dropout_prob, args.aug_dropout_frac
+        )
         y = np.concatenate(
             [np.ones(n_pos, dtype=np.uint8), np.zeros(n_neg, dtype=np.uint8)], axis=0
         )

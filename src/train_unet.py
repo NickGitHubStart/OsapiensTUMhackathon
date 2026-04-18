@@ -15,7 +15,15 @@ from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import functional as F
 
-from src.data_utils import build_label_mask, iter_aef_files, label_tile_ids, load_tile_labels
+from src.data_utils import (
+    apply_patch_channel_dropout,
+    apply_patch_noise,
+    apply_spatial_aug,
+    build_label_mask,
+    iter_aef_files,
+    label_tile_ids,
+    load_tile_labels,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +58,12 @@ class AEFPatchDataset(Dataset):
         seed: int,
         min_labeled_frac: float,
         max_tries: int,
+        aug_flip_rotate_prob: float,
+        aug_noise_std: float,
+        aug_dropout_prob: float,
+        aug_dropout_frac: float,
+        aug_scale_min: float,
+        aug_scale_max: float,
     ) -> None:
         self.aef_paths = aef_paths
         self.data_dir = data_dir
@@ -58,6 +72,12 @@ class AEFPatchDataset(Dataset):
         self.seed = seed
         self.min_labeled_frac = min_labeled_frac
         self.max_tries = max_tries
+        self.aug_flip_rotate_prob = aug_flip_rotate_prob
+        self.aug_noise_std = aug_noise_std
+        self.aug_dropout_prob = aug_dropout_prob
+        self.aug_dropout_frac = aug_dropout_frac
+        self.aug_scale_min = aug_scale_min
+        self.aug_scale_max = aug_scale_max
         self._cache = _TileCache(max_items=4)
 
     def __len__(self) -> int:
@@ -99,11 +119,26 @@ class AEFPatchDataset(Dataset):
             x = int(rng.integers(0, width - self.patch_size + 1))
 
             label_patch = label_mask[y : y + self.patch_size, x : x + self.patch_size]
+            features = aef[:, y : y + self.patch_size, x : x + self.patch_size]
+
+            features, label_patch = apply_spatial_aug(
+                features,
+                label_patch,
+                rng,
+                self.aug_flip_rotate_prob,
+                self.aug_scale_min,
+                self.aug_scale_max,
+            )
+
             valid = label_patch >= 0
             if valid.mean() < self.min_labeled_frac:
                 continue
 
-            features = aef[:, y : y + self.patch_size, x : x + self.patch_size]
+            features = apply_patch_noise(features, rng, self.aug_noise_std)
+            features = apply_patch_channel_dropout(
+                features, rng, self.aug_dropout_prob, self.aug_dropout_frac
+            )
+
             labels = label_patch.astype(np.float32)
             labels[labels < 0] = 0.0
             mask = valid.astype(np.float32)
@@ -214,6 +249,42 @@ def main() -> None:
         help="Minimum labeled fraction inside a patch",
     )
     parser.add_argument(
+        "--aug-flip-rotate-prob",
+        type=float,
+        default=0.0,
+        help="Probability of random flip/rotation augmentations",
+    )
+    parser.add_argument(
+        "--aug-noise-std",
+        type=float,
+        default=0.0,
+        help="Gaussian noise std for patch augmentations",
+    )
+    parser.add_argument(
+        "--aug-dropout-prob",
+        type=float,
+        default=0.0,
+        help="Probability of channel dropout on patches",
+    )
+    parser.add_argument(
+        "--aug-dropout-frac",
+        type=float,
+        default=0.1,
+        help="Fraction of channels to drop when applying dropout",
+    )
+    parser.add_argument(
+        "--aug-scale-min",
+        type=float,
+        default=1.0,
+        help="Minimum scale for random crop/resize augmentation",
+    )
+    parser.add_argument(
+        "--aug-scale-max",
+        type=float,
+        default=1.0,
+        help="Maximum scale for random crop/resize augmentation",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=7,
@@ -257,6 +328,12 @@ def main() -> None:
         seed=args.seed,
         min_labeled_frac=args.min_labeled_frac,
         max_tries=50,
+        aug_flip_rotate_prob=args.aug_flip_rotate_prob,
+        aug_noise_std=args.aug_noise_std,
+        aug_dropout_prob=args.aug_dropout_prob,
+        aug_dropout_frac=args.aug_dropout_frac,
+        aug_scale_min=args.aug_scale_min,
+        aug_scale_max=args.aug_scale_max,
     )
     val_ds = AEFPatchDataset(
         aef_paths=aef_paths,
@@ -266,6 +343,12 @@ def main() -> None:
         seed=args.seed + 123,
         min_labeled_frac=args.min_labeled_frac,
         max_tries=50,
+        aug_flip_rotate_prob=0.0,
+        aug_noise_std=0.0,
+        aug_dropout_prob=0.0,
+        aug_dropout_frac=args.aug_dropout_frac,
+        aug_scale_min=1.0,
+        aug_scale_max=1.0,
     )
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)

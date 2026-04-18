@@ -14,6 +14,9 @@ from xgboost import XGBClassifier
 import joblib
 
 from src.data_utils import (
+    apply_patch_channel_dropout,
+    apply_patch_noise,
+    apply_spatial_aug,
     build_label_mask,
     iter_aef_files,
     label_tile_ids,
@@ -97,6 +100,42 @@ def main() -> None:
         help="Random seed",
     )
     parser.add_argument(
+        "--aug-flip-rotate-prob",
+        type=float,
+        default=0.0,
+        help="Probability of random flip/rotation augmentations",
+    )
+    parser.add_argument(
+        "--aug-noise-std",
+        type=float,
+        default=0.0,
+        help="Gaussian noise std for patch augmentations",
+    )
+    parser.add_argument(
+        "--aug-dropout-prob",
+        type=float,
+        default=0.0,
+        help="Probability of channel dropout on patches",
+    )
+    parser.add_argument(
+        "--aug-dropout-frac",
+        type=float,
+        default=0.1,
+        help="Fraction of channels to drop when applying dropout",
+    )
+    parser.add_argument(
+        "--aug-scale-min",
+        type=float,
+        default=1.0,
+        help="Minimum scale for random crop/resize augmentation",
+    )
+    parser.add_argument(
+        "--aug-scale-max",
+        type=float,
+        default=1.0,
+        help="Maximum scale for random crop/resize augmentation",
+    )
+    parser.add_argument(
         "--model-out",
         default="./artifacts/baseline_aef_patch_xgb.joblib",
         help="Where to save the trained model",
@@ -113,6 +152,8 @@ def main() -> None:
 
     label_tiles = label_tile_ids(data_dir / "labels" / "train")
     logger.info("Label tiles available: %d", len(label_tiles))
+
+    aug_rng = np.random.default_rng(args.seed)
 
     for aef_path in iter_aef_files(aef_dir):
         tile_id, year_str = aef_path.stem.rsplit("_", 1)
@@ -138,6 +179,17 @@ def main() -> None:
 
         for y, x in _iter_patch_coords(height, width, args.patch_size, args.stride):
             label_patch = label_mask[y : y + args.patch_size, x : x + args.patch_size]
+            patch = aef[:, y : y + args.patch_size, x : x + args.patch_size]
+
+            patch, label_patch = apply_spatial_aug(
+                patch,
+                label_patch,
+                aug_rng,
+                args.aug_flip_rotate_prob,
+                args.aug_scale_min,
+                args.aug_scale_max,
+            )
+
             valid = label_patch >= 0
             valid_count = int(valid.sum())
             if valid_count == 0:
@@ -147,10 +199,18 @@ def main() -> None:
             neg_frac = float((label_patch == 0).sum()) / valid_count
 
             if pos_frac >= args.pos_frac:
-                feat = _patch_features(aef[:, y : y + args.patch_size, x : x + args.patch_size])
+                patch = apply_patch_noise(patch, aug_rng, args.aug_noise_std)
+                patch = apply_patch_channel_dropout(
+                    patch, aug_rng, args.aug_dropout_prob, args.aug_dropout_frac
+                )
+                feat = _patch_features(patch)
                 pos_feats.append(feat)
             elif neg_frac >= args.neg_frac:
-                feat = _patch_features(aef[:, y : y + args.patch_size, x : x + args.patch_size])
+                patch = apply_patch_noise(patch, aug_rng, args.aug_noise_std)
+                patch = apply_patch_channel_dropout(
+                    patch, aug_rng, args.aug_dropout_prob, args.aug_dropout_frac
+                )
+                feat = _patch_features(patch)
                 neg_feats.append(feat)
 
         logger.info(

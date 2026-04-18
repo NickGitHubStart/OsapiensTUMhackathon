@@ -47,12 +47,60 @@ Train a small U-Net on AlphaEarth embeddings with random patch sampling:
 python -m src.train_unet --data-dir ./data/makeathon-challenge
 ```
 
+Augmentations (optional):
+
+```bash
+python -m src.train_unet \
+	--data-dir ./data/makeathon-challenge \
+	--aug-flip-rotate-prob 0.5 \
+	--aug-noise-std 0.02 \
+	--aug-dropout-prob 0.3 \
+	--aug-dropout-frac 0.1 \
+	--aug-scale-min 0.9 \
+	--aug-scale-max 1.1
+```
+
 ## XGBoost + Temporal Features
 
 Train an XGBoost pixel model with AEF + NDVI/S1 temporal features:
 
 ```bash
 python -m src.train_xgb_temporal --data-dir ./data/makeathon-challenge
+```
+
+Augmentations (feature-space, optional):
+
+```bash
+python -m src.train_xgb_temporal \
+	--data-dir ./data/makeathon-challenge \
+	--aug-noise-std 0.01 \
+	--aug-dropout-prob 0.3 \
+	--aug-dropout-frac 0.1
+```
+
+## Patch XGBoost Augmentations
+
+```bash
+python -m src.train_patch_xgboost \
+	--data-dir ./data/makeathon-challenge \
+	--patch-size 32 \
+	--stride 32 \
+	--aug-flip-rotate-prob 0.5 \
+	--aug-noise-std 0.02 \
+	--aug-dropout-prob 0.3 \
+	--aug-dropout-frac 0.1 \
+	--aug-scale-min 0.9 \
+	--aug-scale-max 1.1
+```
+
+## Pixel XGBoost Augmentations
+
+```bash
+python -m src.train_baseline \
+	--data-dir ./data/makeathon-challenge \
+	--aug-noise-std 0.01 \
+	--aug-dropout-prob 0.3 \
+	--aug-dropout-frac 0.1
 ```
 
 ## Notes
