@@ -1,0 +1,42 @@
+{
+  "tag": "americas_to_asia_v3",
+  "train_region": "americas",
+  "val_region": "asia",
+  "train_tiles": [
+    "18NWG_6_6",
+    "18NWH_1_4",
+    "18NWJ_8_9",
+    "18NWM_9_4",
+    "18NXH_6_8",
+    "18NXJ_7_6",
+    "18NYH_9_9",
+    "19NBD_4_4"
+  ],
+  "val_tiles": [
+    "47QMB_0_8",
+    "47QQV_2_4",
+    "48PUT_0_8",
+    "48PWV_7_8",
+    "48PXC_7_7",
+    "48PYB_3_6",
+    "48QVE_3_0",
+    "48QWD_2_2"
+  ],
+  "in_channels": 64,
+  "base_channels": 48,
+  "patch_size": 128,
+  "aef_downsample": 1,
+  "best_epoch": 3,
+  "best_val_iou": 0.2533912219676084,
+  "best_threshold": 0.2,
+  "label_strategy": "xregion",
+  "loss_weights": {
+    "bce": 0.4,
+    "dice": 0.3,
+    "tversky": 0.3,
+    "tversky_alpha": 0.7,
+    "tversky_beta": 0.3
+  },
+  "best_model_path": "unet_xregion_americas_to_asia_v3_best.pt",
+  "last_model_path": "unet_xregion_americas_to_asia_v3_best.pt"
+}
