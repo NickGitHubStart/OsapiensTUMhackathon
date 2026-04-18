@@ -22,6 +22,7 @@ from src.data_utils import (
     label_tile_ids,
     load_tile_labels,
     reproject_array,
+    s2_cloud_mask,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,9 +69,12 @@ def _load_ndvi_stack(tile_id: str, data_dir: Path, ref_profile: dict) -> list[np
             continue
 
         with rasterio.open(path) as src:
-            red = src.read(4).astype(np.float32)
-            nir = src.read(8).astype(np.float32)
+            s2_stack = src.read().astype(np.float32)
+            cloud_mask = s2_cloud_mask(s2_stack)
+            red = s2_stack[3]
+            nir = s2_stack[7]
             ndvi = _compute_ndvi(nir, red)
+            ndvi[cloud_mask] = np.nan
             ndvi = reproject_array(ndvi, src.transform, src.crs, ref_profile)
 
         ndvi_items.append((date, ndvi))
@@ -106,19 +110,21 @@ def _temporal_features(ndvi_stack: list[np.ndarray], s1_stack: list[np.ndarray])
 
     ndvi_arr = np.stack(ndvi_stack, axis=0)
     ndvi_delta = ndvi_arr[-1] - ndvi_arr[0]
-    ndvi_var = np.var(ndvi_arr, axis=0)
+    ndvi_var = np.nanvar(ndvi_arr, axis=0)
 
     if ndvi_arr.shape[0] > 1:
         drops = ndvi_arr[:-1] - ndvi_arr[1:]
-        ndvi_max_drop = np.max(drops, axis=0)
+        ndvi_max_drop = np.nanmax(drops, axis=0)
+        all_nan = np.all(np.isnan(drops), axis=0)
+        ndvi_max_drop[all_nan] = np.nan
     else:
-        ndvi_max_drop = np.zeros_like(ndvi_arr[0])
+        ndvi_max_drop = np.full_like(ndvi_arr[0], np.nan)
 
     if not s1_stack:
         s1_change = np.zeros_like(ndvi_arr[0])
     else:
         s1_arr = np.stack(s1_stack, axis=0)
-        s1_change = np.max(s1_arr, axis=0) - np.min(s1_arr, axis=0)
+        s1_change = np.nanmax(s1_arr, axis=0) - np.nanmin(s1_arr, axis=0)
 
     return ndvi_delta, ndvi_max_drop, s1_change, ndvi_var
 

@@ -9,12 +9,39 @@ from typing import Iterable
 import numpy as np
 import rasterio
 from rasterio.warp import Resampling, reproject
+from scipy.ndimage import binary_opening, label as cc_label
 
 
 @dataclass
 class TileLabels:
     positive: np.ndarray
     negative: np.ndarray
+
+
+def s2_cloud_mask(s2_stack: np.ndarray) -> np.ndarray:
+    blue = s2_stack[1].astype(np.float32)
+    cirrus = s2_stack[9].astype(np.float32)
+    is_cloud = (blue > 2500) | (cirrus > 200)
+    no_data = (s2_stack[1] == 0) & (s2_stack[2] == 0) & (s2_stack[3] == 0)
+    return is_cloud | no_data
+
+
+def postprocess_prediction(
+    pred_binary: np.ndarray,
+    transform,
+    min_area_ha: float = 0.5,
+) -> np.ndarray:
+    opened = binary_opening(pred_binary.astype(bool), structure=np.ones((3, 3), dtype=bool))
+    labels, _ = cc_label(opened)
+    pixel_area_ha = abs(transform.a * transform.e) / 10_000
+    min_pixels = int(np.ceil(min_area_ha / pixel_area_ha))
+
+    component_sizes = np.bincount(labels.ravel())
+    keep_labels = np.where(component_sizes >= min_pixels)[0]
+    keep_labels = keep_labels[keep_labels != 0]
+
+    keep_mask = np.isin(labels, keep_labels)
+    return keep_mask.astype(np.uint8)
 
 
 def reproject_to_match(src_path: Path, ref_profile: dict) -> np.ndarray:

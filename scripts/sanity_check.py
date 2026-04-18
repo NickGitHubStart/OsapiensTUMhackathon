@@ -21,7 +21,15 @@ import sys
 repo_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(repo_root))
 
-from src.data_utils import build_label_mask, iter_aef_files, label_tile_ids, load_tile_labels, reproject_array
+from src.data_utils import (
+    build_label_mask,
+    iter_aef_files,
+    label_tile_ids,
+    load_tile_labels,
+    postprocess_prediction,
+    reproject_array,
+    s2_cloud_mask,
+)
 
 try:
     sys.path.insert(0, str(repo_root / "ONI-makeathon-challenge-2026-main"))
@@ -31,6 +39,14 @@ except Exception as exc:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+
+def _compute_iou(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    intersection = np.logical_and(y_true == 1, y_pred == 1).sum()
+    union = np.logical_or(y_true == 1, y_pred == 1).sum()
+    if union == 0:
+        return float("nan")
+    return float(intersection / union)
 
 
 def _make_rgb(aef: np.ndarray) -> np.ndarray:
@@ -77,9 +93,12 @@ def _load_ndvi_stack(tile_id: str, data_dir: Path, ref_profile: dict) -> list[np
             continue
 
         with rasterio.open(path) as src:
-            red = src.read(4).astype(np.float32)
-            nir = src.read(8).astype(np.float32)
+            s2_stack = src.read().astype(np.float32)
+            cloud_mask = s2_cloud_mask(s2_stack)
+            red = s2_stack[3]
+            nir = s2_stack[7]
             ndvi = _compute_ndvi(nir, red)
+            ndvi[cloud_mask] = np.nan
             ndvi = reproject_array(ndvi, src.transform, src.crs, ref_profile)
         ndvi_items.append(((year, month), ndvi))
 
@@ -119,19 +138,21 @@ def _temporal_features(ndvi_stack: list[np.ndarray], s1_stack: list[np.ndarray])
 
     ndvi_arr = np.stack(ndvi_stack, axis=0)
     ndvi_delta = ndvi_arr[-1] - ndvi_arr[0]
-    ndvi_var = np.var(ndvi_arr, axis=0)
+    ndvi_var = np.nanvar(ndvi_arr, axis=0)
 
     if ndvi_arr.shape[0] > 1:
         drops = ndvi_arr[:-1] - ndvi_arr[1:]
-        ndvi_max_drop = np.max(drops, axis=0)
+        ndvi_max_drop = np.nanmax(drops, axis=0)
+        all_nan = np.all(np.isnan(drops), axis=0)
+        ndvi_max_drop[all_nan] = np.nan
     else:
-        ndvi_max_drop = np.zeros_like(ndvi_arr[0])
+        ndvi_max_drop = np.full_like(ndvi_arr[0], np.nan)
 
     if not s1_stack:
         s1_change = np.zeros_like(ndvi_arr[0])
     else:
         s1_arr = np.stack(s1_stack, axis=0)
-        s1_change = np.max(s1_arr, axis=0) - np.min(s1_arr, axis=0)
+        s1_change = np.nanmax(s1_arr, axis=0) - np.nanmin(s1_arr, axis=0)
 
     return ndvi_delta, ndvi_max_drop, s1_change, ndvi_var
 
@@ -227,12 +248,14 @@ def _write_polygon_geojson(mask: np.ndarray, ref_profile: dict, out_path: Path) 
     meta = ref_profile.copy()
     meta.update(dtype="uint8", nodata=0, count=1)
 
+    processed = postprocess_prediction(mask, ref_profile["transform"])
+
     with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp:
         tmp_path = tmp.name
 
     try:
         with rasterio.open(tmp_path, "w", **meta) as dst:
-            dst.write(mask.astype(np.uint8), 1)
+            dst.write(processed.astype(np.uint8), 1)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         raster_to_geojson(tmp_path, output_path=str(out_path))
     finally:
@@ -361,6 +384,7 @@ def main() -> None:
         all_pred.append(y_pred)
 
         tile_report = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
+        tile_report["iou"] = _compute_iou(y_true, y_pred)
         tile_reports[tile_id] = tile_report
 
         rgb = _make_rgb(aef)
@@ -391,6 +415,7 @@ def main() -> None:
     y_true_all = np.concatenate(all_true, axis=0)
     y_pred_all = np.concatenate(all_pred, axis=0)
     overall = classification_report(y_true_all, y_pred_all, output_dict=True, zero_division=0)
+    overall["iou"] = _compute_iou(y_true_all, y_pred_all)
 
     payload = {
         "script": "sanity_check.py",
