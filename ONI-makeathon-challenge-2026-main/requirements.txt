@@ -9,3 +9,5 @@ botocore  # Version defined by boto3, but explicitly imported
 tqdm~=4.66
 ipykernel
 jupyter
+scikit-learn~=1.5.0
+xgboost~=2.0.3

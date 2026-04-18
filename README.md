@@ -21,6 +21,16 @@ This downloads `makeathon-challenge/` into `./data/`:
 data/makeathon-challenge/
 ```
 
+## Basic Training (Baseline)
+
+Train a simple baseline model on AlphaEarth embeddings with consensus labels:
+
+```bash
+python -m src.train_baseline --data-dir ./data/makeathon-challenge
+```
+
+The trained model is saved to `./artifacts/baseline_aef_logreg.joblib` by default.
+
 ## Notes
 
 - The notebook walkthrough lives in [ONI-makeathon-challenge-2026-main/challenge.ipynb](ONI-makeathon-challenge-2026-main/challenge.ipynb).
