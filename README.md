@@ -47,6 +47,14 @@ Train a small U-Net on AlphaEarth embeddings with random patch sampling:
 python -m src.train_unet --data-dir ./data/makeathon-challenge
 ```
 
+## XGBoost + Temporal Features
+
+Train an XGBoost pixel model with AEF + NDVI/S1 temporal features:
+
+```bash
+python -m src.train_xgb_temporal --data-dir ./data/makeathon-challenge
+```
+
 ## Notes
 
 - The notebook walkthrough lives in [ONI-makeathon-challenge-2026-main/challenge.ipynb](ONI-makeathon-challenge-2026-main/challenge.ipynb).
