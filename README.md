@@ -162,6 +162,19 @@ python scripts/predict_baseline4.py \
 	--out-dir ./submission
 ```
 
+## Submission Merge (Final Step)
+
+Merge per-tile GeoJSONs into a single submission file:
+
+```bash
+python scripts/merge_geojson_tiles.py \
+	--in-dir ./submission/baseline3 \
+	--pattern "pred_*.geojson" \
+	--out-file ./submission/submission.geojson
+```
+
+If your per-tile files are named like `{tile_id}.geojson`, use `--pattern "*.geojson"`.
+
 ## Polygon Prediction (GLAD/RADD Comparison)
 
 Predict deforestation within a polygon and compare with GLAD/RADD consensus labels:
