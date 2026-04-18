@@ -109,6 +109,22 @@ python -m src.train_baseline \
 	--aug-noise-std 0.01 \
 	--aug-dropout-prob 0.3 \
 	--aug-dropout-frac 0.1
+
+## Polygon Prediction (GLAD/RADD Comparison)
+
+Predict deforestation within a polygon and compare with GLAD/RADD consensus labels:
+
+```bash
+python scripts/predict_polygon.py \
+	--data-dir /content/drive/MyDrive/makeathon-challenge \
+	--model-path /content/drive/MyDrive/artifacts/baseline_aef_logreg.joblib \
+	--model-type aef_xgb \
+	--year 2020 \
+	--polygon-geojson /content/drive/MyDrive/my_polygon.geojson \
+	--out-dir /content/drive/MyDrive/outputs
+```
+
+You can also pass a WKT polygon via `--polygon-wkt` and optionally provide `--tile-id`.
 ```
 
 ## Notes

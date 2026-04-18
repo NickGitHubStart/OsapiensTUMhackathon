@@ -93,7 +93,7 @@ repo/
 ├── Makefile
 └── requirements.txt
 ```
-
+write 
 The key discipline: **zero ML logic in notebooks.** The notebook does `!git clone`, `!pip install`, mounts Drive, points to a config, and calls `python -m src.train --config configs/paths.colab.yaml`. Everything else is in `.py` files you can version, test, and run anywhere.
 
 ## One thing I'd strongly reconsider about Colab
