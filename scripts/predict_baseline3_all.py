@@ -30,6 +30,20 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
+def _resolve_model_keys(models: dict, ensemble: str) -> list[str]:
+    if not models:
+        raise ValueError("No models found in bundle.")
+
+    if ensemble == "average_all":
+        return list(models.keys())
+
+    if "all_data" in models:
+        return ["all_data"]
+    if "all" in models:
+        return ["all"]
+    return [next(iter(models.keys()))]
+
+
 def _collect_tiles(data_dir: Path, split: str) -> list[str]:
     if split == "test":
         meta_path = data_dir / "metadata" / "test_tiles.geojson"
@@ -124,10 +138,7 @@ def main() -> None:
     bundle = joblib.load(args.bundle_path)
     models = bundle.get("models", {})
 
-    if args.ensemble == "average_all":
-        model_keys = list(models.keys())
-    else:
-        model_keys = ["all_data"]
+    model_keys = _resolve_model_keys(models, args.ensemble)
 
     for key in model_keys:
         if key not in models:
