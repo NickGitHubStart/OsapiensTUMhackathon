@@ -31,6 +31,22 @@ python -m src.train_baseline --data-dir ./data/makeathon-challenge
 
 The trained model is saved to `./artifacts/baseline_aef_logreg.joblib` by default.
 
+## Patch Baseline (XGBoost)
+
+Train a patch-based XGBoost model on AlphaEarth embeddings:
+
+```bash
+python -m src.train_patch_xgboost --data-dir ./data/makeathon-challenge
+```
+
+## Patch U-Net (AEF)
+
+Train a small U-Net on AlphaEarth embeddings with random patch sampling:
+
+```bash
+python -m src.train_unet --data-dir ./data/makeathon-challenge
+```
+
 ## Notes
 
 - The notebook walkthrough lives in [ONI-makeathon-challenge-2026-main/challenge.ipynb](ONI-makeathon-challenge-2026-main/challenge.ipynb).
