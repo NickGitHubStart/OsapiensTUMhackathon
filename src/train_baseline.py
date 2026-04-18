@@ -40,6 +40,14 @@ def _sample_pixels(
     return features[idx], labels[idx]
 
 
+def _sample_rows(features: np.ndarray, max_samples: int, rng: np.random.Generator) -> np.ndarray:
+    n = features.shape[0]
+    if n <= max_samples:
+        return features
+    idx = rng.choice(n, size=max_samples, replace=False)
+    return features[idx]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Train a basic baseline on AlphaEarth embeddings."
@@ -54,6 +62,12 @@ def main() -> None:
         type=int,
         default=200000,
         help="Maximum total samples to train on",
+    )
+    parser.add_argument(
+        "--per-tile-samples",
+        type=int,
+        default=50000,
+        help="Maximum samples to keep per tile before concatenation",
     )
     parser.add_argument(
         "--neg-pos-ratio",
@@ -146,13 +160,16 @@ def main() -> None:
         n_neg = min(neg_features.shape[0], n_pos * args.neg_pos_ratio)
         neg_sel = rng.choice(neg_features.shape[0], size=n_neg, replace=False)
 
-        x = np.concatenate([pos_features, neg_features[neg_sel]], axis=0)
+        pos_features = _sample_rows(pos_features, args.per_tile_samples, rng)
+        neg_features = _sample_rows(neg_features[neg_sel], args.per_tile_samples, rng)
+        x = np.concatenate([pos_features, neg_features], axis=0)
         x = apply_feature_noise(x, rng, args.aug_noise_std)
         x = apply_feature_channel_dropout(
             x, rng, args.aug_dropout_prob, args.aug_dropout_frac
         )
         y = np.concatenate(
-            [np.ones(n_pos, dtype=np.uint8), np.zeros(n_neg, dtype=np.uint8)], axis=0
+            [np.ones(pos_features.shape[0], dtype=np.uint8), np.zeros(neg_features.shape[0], dtype=np.uint8)],
+            axis=0,
         )
 
         xs.append(x)
