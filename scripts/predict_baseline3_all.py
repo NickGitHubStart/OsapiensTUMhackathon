@@ -13,6 +13,7 @@ import geopandas as gpd
 import joblib
 import numpy as np
 import rasterio
+from rasterio.crs import CRS
 
 repo_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(repo_root))
@@ -37,7 +38,10 @@ def _collect_tiles(data_dir: Path, split: str) -> list[str]:
 
     if meta_path.exists():
         gdf = gpd.read_file(meta_path)
-        return [str(name) for name in gdf["name"].tolist()]
+        for col in ("name", "tile_id", "id"):
+            if col in gdf.columns:
+                return [str(name) for name in gdf[col].tolist()]
+        raise RuntimeError(f"No tile id column found in {meta_path}")
 
     aef_dir = data_dir / "aef-embeddings" / split
     tile_ids = set()
@@ -90,6 +94,15 @@ def _write_geojson(mask: np.ndarray, ref_profile: dict, out_path: Path, min_area
         Path(tmp_path).unlink(missing_ok=True)
 
 
+def _is_geographic(crs) -> bool:
+    if crs is None:
+        return False
+    try:
+        return CRS.from_user_input(crs).is_geographic
+    except Exception:
+        return False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate baseline3 GeoJSON predictions for all tiles.")
     parser.add_argument("--data-dir", default="./data/makeathon-challenge")
@@ -131,41 +144,64 @@ def main() -> None:
             logger.warning("Skipping %s (missing 2020 AEF)", tile_id)
             continue
 
-        target_year = args.year if args.year else (max(years) if years else 0)
-        if target_year == 0:
-            logger.warning("Skipping %s (no AEF years)", tile_id)
-            continue
-        if target_year not in years:
-            logger.warning("Skipping %s (missing %s AEF)", tile_id, target_year)
-            continue
+        if args.year:
+            target_years = [args.year]
+        else:
+            target_years = [year for year in years if year > 2020]
+            if not target_years:
+                target_years = [max(years)]
+                logger.warning("%s: no post-2020 AEF years, using %s", tile_id, target_years[0])
 
-        aef_path = aef_dir / f"{tile_id}_{target_year}.tiff"
         aef_2020_path = aef_dir / f"{tile_id}_2020.tiff"
-        prev_path = aef_dir / f"{tile_id}_{target_year - 1}.tiff"
-
-        if not aef_path.exists() or not aef_2020_path.exists():
-            logger.warning("Skipping %s (missing AEF files)", tile_id)
+        if not aef_2020_path.exists():
+            logger.warning("Skipping %s (missing 2020 AEF)", tile_id)
             continue
-
-        with rasterio.open(aef_path) as src:
-            aef = src.read().astype(np.float32)
-            ref_profile = src.profile
 
         with rasterio.open(aef_2020_path) as src:
             aef_2020 = src.read().astype(np.float32)
 
-        aef_prev = None
-        if target_year > 2020 and prev_path.exists():
-            with rasterio.open(prev_path) as src:
-                aef_prev = src.read().astype(np.float32)
+        year_probs: list[np.ndarray] = []
+        ref_profile = None
 
-        probs: list[np.ndarray] = []
-        for key in model_keys:
-            probs.append(_predict_baseline2(aef, aef_2020, aef_prev, models[key]))
-        proba = np.mean(np.stack(probs, axis=0), axis=0)
+        for target_year in target_years:
+            aef_path = aef_dir / f"{tile_id}_{target_year}.tiff"
+            if not aef_path.exists():
+                logger.warning("Skipping %s (%s missing)", tile_id, aef_path.name)
+                continue
+
+            with rasterio.open(aef_path) as src:
+                aef = src.read().astype(np.float32)
+                if ref_profile is None:
+                    ref_profile = src.profile
+
+            prev_path = aef_dir / f"{tile_id}_{target_year - 1}.tiff"
+            aef_prev = None
+            if target_year > 2020 and prev_path.exists():
+                with rasterio.open(prev_path) as src:
+                    aef_prev = src.read().astype(np.float32)
+
+            probs: list[np.ndarray] = []
+            for key in model_keys:
+                probs.append(_predict_baseline2(aef, aef_2020, aef_prev, models[key]))
+            year_probs.append(np.mean(np.stack(probs, axis=0), axis=0))
+
+        if not year_probs or ref_profile is None:
+            logger.warning("Skipping %s (no usable AEF years)", tile_id)
+            continue
+
+        if args.year:
+            proba = year_probs[0]
+        else:
+            proba = np.max(np.stack(year_probs, axis=0), axis=0)
 
         pred = (proba > args.threshold).astype(np.uint8)
-        if args.apply_postprocess:
+
+        apply_postprocess = args.apply_postprocess
+        if apply_postprocess and _is_geographic(ref_profile.get("crs")):
+            logger.warning("%s: skipping raster-space postprocess (geographic CRS)", tile_id)
+            apply_postprocess = False
+
+        if apply_postprocess:
             pred = postprocess_prediction(pred, ref_profile["transform"], min_area_ha=args.min_area_ha)
             geojson = _write_geojson(pred, ref_profile, out_dir / f"{tile_id}.geojson", min_area_ha=0.0)
         else:
