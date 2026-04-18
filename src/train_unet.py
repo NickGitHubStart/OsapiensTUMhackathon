@@ -5,97 +5,20 @@ from __future__ import annotations
 import argparse
 import logging
 from collections import deque
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 import numpy as np
 import rasterio
-from rasterio.warp import Resampling, reproject
 import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import functional as F
 
+from src.data_utils import build_label_mask, iter_aef_files, label_tile_ids, load_tile_labels
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
-
-@dataclass
-class TileLabels:
-    positive: np.ndarray
-    negative: np.ndarray
-
-
-def _reproject_to_match(src_path: Path, ref_profile: dict) -> np.ndarray:
-    with rasterio.open(src_path) as src:
-        dst = np.zeros((ref_profile["height"], ref_profile["width"]), dtype=np.uint16)
-        reproject(
-            source=src.read(1),
-            destination=dst,
-            src_transform=src.transform,
-            src_crs=src.crs,
-            dst_transform=ref_profile["transform"],
-            dst_crs=ref_profile["crs"],
-            resampling=Resampling.nearest,
-        )
-        return dst
-
-
-def _load_tile_labels(data_dir: Path, tile_id: str, ref_profile: dict) -> TileLabels | None:
-    labels_dir = data_dir / "labels" / "train"
-
-    glads2_alert = labels_dir / "glads2" / f"glads2_{tile_id}_alert.tif"
-    glads2_date = labels_dir / "glads2" / f"glads2_{tile_id}_alertDate.tif"
-    radd_labels = labels_dir / "radd" / f"radd_{tile_id}_labels.tif"
-
-    if not (glads2_alert.exists() and glads2_date.exists() and radd_labels.exists()):
-        logger.warning("Missing labels for %s, skipping", tile_id)
-        return None
-
-    glads2_alert_r = _reproject_to_match(glads2_alert, ref_profile)
-    glads2_date_r = _reproject_to_match(glads2_date, ref_profile)
-    radd_r = _reproject_to_match(radd_labels, ref_profile)
-
-    glads2_date = np.datetime64("2019-01-01") + glads2_date_r.astype("timedelta64[D]")
-    glads2_pos = (glads2_alert_r >= 2) & (glads2_date >= np.datetime64("2020-01-01"))
-
-    radd_conf = radd_r // 10000
-    radd_days = radd_r % 10000
-    radd_date = np.datetime64("2014-12-31") + radd_days.astype("timedelta64[D]")
-    radd_pos = (radd_conf >= 2) & (radd_date >= np.datetime64("2020-01-01"))
-
-    positive = glads2_pos & radd_pos
-    negative = (glads2_alert_r == 0) & (radd_r == 0)
-
-    return TileLabels(positive=positive, negative=negative)
-
-
-def _iter_aef_files(aef_dir: Path) -> Iterable[Path]:
-    yield from sorted(aef_dir.glob("*.tiff"))
-
-
-def _label_tile_ids(labels_dir: Path) -> set[str]:
-    glads2_alert = {
-        p.name.replace("glads2_", "").replace("_alert.tif", "")
-        for p in (labels_dir / "glads2").glob("glads2_*_alert.tif")
-    }
-    glads2_date = {
-        p.name.replace("glads2_", "").replace("_alertDate.tif", "")
-        for p in (labels_dir / "glads2").glob("glads2_*_alertDate.tif")
-    }
-    radd = {
-        p.name.replace("radd_", "").replace("_labels.tif", "")
-        for p in (labels_dir / "radd").glob("radd_*_labels.tif")
-    }
-    return glads2_alert & glads2_date & radd
-
-
-def _build_label_mask(labels: TileLabels) -> np.ndarray:
-    mask = np.full(labels.positive.shape, -1, dtype=np.int8)
-    mask[labels.negative] = 0
-    mask[labels.positive] = 1
-    return mask
 
 
 class _TileCache:
@@ -150,11 +73,11 @@ class AEFPatchDataset(Dataset):
             aef = src.read().astype(np.float32)
             ref_profile = src.profile
 
-        labels = _load_tile_labels(self.data_dir, tile_id, ref_profile)
+        labels = load_tile_labels(self.data_dir, tile_id, ref_profile)
         if labels is None:
             return None
 
-        label_mask = _build_label_mask(labels)
+        label_mask = build_label_mask(labels)
         self._cache.set(aef_path, (aef, label_mask))
         return aef, label_mask
 
@@ -310,11 +233,11 @@ def main() -> None:
     model_out = Path(args.model_out)
     model_out.parent.mkdir(parents=True, exist_ok=True)
 
-    label_tiles = _label_tile_ids(data_dir / "labels" / "train")
+    label_tiles = label_tile_ids(data_dir / "labels" / "train")
     logger.info("Label tiles available: %d", len(label_tiles))
 
     aef_paths: list[Path] = []
-    for aef_path in _iter_aef_files(aef_dir):
+    for aef_path in iter_aef_files(aef_dir):
         tile_id, year_str = aef_path.stem.rsplit("_", 1)
         year = int(year_str)
         if year < 2020:
