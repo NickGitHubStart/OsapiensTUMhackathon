@@ -129,6 +129,39 @@ python -m src.train_baseline \
 	--aug-dropout-prob 0.3 \
 	--aug-dropout-frac 0.1
 
+```
+
+## Baseline4 (Patch XGBoost, Multimodal Cache)
+
+Build the baseline4 cache (train + test):
+
+```bash
+python -m src.build_cache_baseline4 \
+	--data-dir ./data/makeathon-challenge \
+	--cache-dir ./data/makeathon-challenge-cache/baseline4 \
+	--split both
+```
+
+Train patch-based baseline4 models:
+
+```bash
+python -m src.train_baseline4 \
+	--cache-dir ./data/makeathon-challenge-cache/baseline4 \
+	--patch-size 16 \
+	--stride-train 16 \
+	--stride-infer 8 \
+	--include-gradient
+```
+
+Run inference from cache and export GeoJSON:
+
+```bash
+python scripts/predict_baseline4.py \
+	--cache-dir ./data/makeathon-challenge-cache/baseline4 \
+	--bundle-path ./artifacts/baseline4_patch_xgb_ensemble.joblib \
+	--out-dir ./submission
+```
+
 ## Polygon Prediction (GLAD/RADD Comparison)
 
 Predict deforestation within a polygon and compare with GLAD/RADD consensus labels:
