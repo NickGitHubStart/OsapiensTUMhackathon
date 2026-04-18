@@ -44,12 +44,26 @@ def _reproject_array(src_array: np.ndarray, src_transform, src_crs, ref_profile:
     return dst
 
 
-def _iter_s2_files(tile_id: str, s2_dir: Path) -> list[Path]:
-    return sorted((s2_dir / f"{tile_id}__s2_l2a").glob("*.tif"))
+def _resolve_tile_dir(root: Path, tile_id: str, suffix: str) -> Path | None:
+    for split in ["train", "test"]:
+        candidate = root / split / f"{tile_id}__{suffix}"
+        if candidate.exists():
+            return candidate
+    return None
 
 
-def _iter_s1_files(tile_id: str, s1_dir: Path) -> list[Path]:
-    return sorted((s1_dir / f"{tile_id}__s1_rtc").glob(f"{tile_id}__s1_rtc_*.tif"))
+def _iter_s2_files(tile_id: str, root: Path) -> list[Path]:
+    tile_dir = _resolve_tile_dir(root, tile_id, "s2_l2a")
+    if tile_dir is None:
+        return []
+    return sorted(tile_dir.glob("*.tif"))
+
+
+def _iter_s1_files(tile_id: str, root: Path) -> list[Path]:
+    tile_dir = _resolve_tile_dir(root, tile_id, "s1_rtc")
+    if tile_dir is None:
+        return []
+    return sorted(tile_dir.glob(f"{tile_id}__s1_rtc_*.tif"))
 
 
 def _parse_s2_date(path: Path) -> tuple[int, int] | None:
@@ -72,10 +86,10 @@ def _compute_ndvi(nir: np.ndarray, red: np.ndarray) -> np.ndarray:
 
 
 def _load_ndvi_stack(tile_id: str, data_dir: Path, ref_profile: dict) -> list[np.ndarray]:
-    s2_dir = data_dir / "sentinel-2" / "train"
+    s2_root = data_dir / "sentinel-2"
     ndvi_items: list[tuple[tuple[int, int], np.ndarray]] = []
 
-    for path in _iter_s2_files(tile_id, s2_dir):
+    for path in _iter_s2_files(tile_id, s2_root):
         date = _parse_s2_date(path)
         if date is None:
             continue
@@ -93,10 +107,10 @@ def _load_ndvi_stack(tile_id: str, data_dir: Path, ref_profile: dict) -> list[np
 
 
 def _load_s1_stack(tile_id: str, data_dir: Path, ref_profile: dict) -> list[np.ndarray]:
-    s1_dir = data_dir / "sentinel-1" / "train"
+    s1_root = data_dir / "sentinel-1"
     s1_items: list[tuple[tuple[int, int], np.ndarray]] = []
 
-    for path in _iter_s1_files(tile_id, s1_dir):
+    for path in _iter_s1_files(tile_id, s1_root):
         date = _parse_s1_date(path)
         if date is None:
             continue
