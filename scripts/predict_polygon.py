@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
+import sys
 
 import geopandas as gpd
 import joblib
@@ -13,6 +14,9 @@ import numpy as np
 import rasterio
 from rasterio.features import rasterize
 from shapely import wkt
+
+repo_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(repo_root))
 
 from src.data_utils import build_label_mask, load_tile_labels
 
