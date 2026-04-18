@@ -42,12 +42,16 @@ def _reproject_to_match(src_path: Path, ref_profile: dict) -> np.ndarray:
         return dst
 
 
-def _load_tile_labels(data_dir: Path, tile_id: str, ref_profile: dict) -> TileLabels:
+def _load_tile_labels(data_dir: Path, tile_id: str, ref_profile: dict) -> TileLabels | None:
     labels_dir = data_dir / "labels" / "train"
 
     glads2_alert = labels_dir / "glads2" / f"glads2_{tile_id}_alert.tif"
     glads2_date = labels_dir / "glads2" / f"glads2_{tile_id}_alertDate.tif"
     radd_labels = labels_dir / "radd" / f"radd_{tile_id}_labels.tif"
+
+    if not (glads2_alert.exists() and glads2_date.exists() and radd_labels.exists()):
+        logger.warning("Missing labels for %s, skipping", tile_id)
+        return None
 
     glads2_alert_r = _reproject_to_match(glads2_alert, ref_profile)
     glads2_date_r = _reproject_to_match(glads2_date, ref_profile)
@@ -141,6 +145,8 @@ def main() -> None:
             ref_profile = src.profile
 
         labels = _load_tile_labels(data_dir, tile_id, ref_profile)
+        if labels is None:
+            continue
 
         # Flatten features to (N, C)
         channels, height, width = aef.shape
