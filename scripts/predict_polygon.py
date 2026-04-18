@@ -98,6 +98,22 @@ def _predict_unet(
 	return out / counts
 
 
+def _predict_baseline2(aef: np.ndarray, aef_2020: np.ndarray, aef_prev: np.ndarray | None, model) -> np.ndarray:
+	diff_2020 = aef - aef_2020
+	if aef_prev is None:
+		diff_prev = np.zeros_like(aef)
+	else:
+		diff_prev = aef - aef_prev
+
+	channels, height, width = aef.shape
+	base = aef.reshape(channels, height * width).transpose(1, 0)
+	d2020 = diff_2020.reshape(channels, height * width).transpose(1, 0)
+	dprev = diff_prev.reshape(channels, height * width).transpose(1, 0)
+	features = np.concatenate([base, d2020, dprev], axis=1)
+	proba = model.predict_proba(features)[:, 1]
+	return proba.reshape(height, width)
+
+
 def _load_polygon(
 	polygon_geojson: str | None,
 	polygon_wkt: str | None,
@@ -150,7 +166,7 @@ def main() -> None:
 	parser.add_argument("--model-path", required=True)
 	parser.add_argument(
 		"--model-type",
-		choices=["aef_xgb", "patch_xgb", "unet"],
+		choices=["aef_xgb", "patch_xgb", "unet", "baseline3"],
 		default="aef_xgb",
 	)
 	parser.add_argument("--tile-id", default="")
@@ -201,6 +217,32 @@ def main() -> None:
 	elif args.model_type == "patch_xgb":
 		model = joblib.load(args.model_path)
 		proba = _predict_patch_xgb(aef, model, args.patch_size, args.stride)
+	elif args.model_type == "baseline3":
+		aef_2020_path = data_dir / "aef-embeddings" / "train" / f"{tile_id}_2020.tiff"
+		if not aef_2020_path.exists():
+			aef_2020_path = data_dir / "aef-embeddings" / "test" / f"{tile_id}_2020.tiff"
+		if not aef_2020_path.exists():
+			raise FileNotFoundError(f"AEF 2020 file not found for {tile_id}")
+		with rasterio.open(aef_2020_path) as src:
+			aef_2020 = src.read().astype(np.float32)
+
+		prev_path = data_dir / "aef-embeddings" / "train" / f"{tile_id}_{args.year - 1}.tiff"
+		if not prev_path.exists():
+			prev_path = data_dir / "aef-embeddings" / "test" / f"{tile_id}_{args.year - 1}.tiff"
+		aef_prev = None
+		if args.year > 2020 and prev_path.exists():
+			with rasterio.open(prev_path) as src:
+				aef_prev = src.read().astype(np.float32)
+
+		bundle = joblib.load(args.model_path)
+		models = bundle.get("models", {})
+		if not models:
+			raise RuntimeError("No models found in baseline3 bundle.")
+
+		probs = []
+		for _, mdl in models.items():
+			probs.append(_predict_baseline2(aef, aef_2020, aef_prev, mdl))
+		proba = np.mean(np.stack(probs, axis=0), axis=0)
 	else:
 		proba = _predict_unet(aef, Path(args.model_path), args.patch_size, args.stride)
 

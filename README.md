@@ -144,6 +144,19 @@ python scripts/predict_polygon.py \
 ```
 
 You can also pass a WKT polygon via `--polygon-wkt` and optionally provide `--tile-id`.
+
+## Sanity Check (Train Tiles)
+
+Run a quick sanity check that writes overlays, polygons, and a JSON report:
+
+```bash
+python scripts/sanity_check.py \
+	--data-dir /content/drive/MyDrive/makeathon-challenge \
+	--model-type baseline2 \
+	--model-path /content/drive/MyDrive/artifacts/baseline2_aef_xgb.joblib \
+	--tile-ids 18NWG_6_6,48QWD_2_2 \
+	--year 2020
+```
 ```
 
 ## Notes
