@@ -32,6 +32,19 @@ def _group_aef_by_tile(aef_dir: Path) -> dict[str, dict[int, Path]]:
     return tiles
 
 
+def _infer_region(tile_id: str) -> str:
+    try:
+        zone = int(tile_id[:2])
+    except ValueError:
+        return "other"
+
+    if zone in {47, 48}:
+        return "thailand"
+    if zone in {18, 19}:
+        return "colombia"
+    return "other"
+
+
 def _sample_rows(
     features: np.ndarray,
     labels: np.ndarray,
@@ -79,6 +92,11 @@ def main() -> None:
         default="./artifacts/baseline2_aef_xgb.joblib",
         help="Where to save the trained model",
     )
+    parser.add_argument(
+        "--val-region",
+        default="",
+        help="Holdout region for validation (thailand|colombia|other)",
+    )
 
     args = parser.parse_args()
     data_dir = Path(args.data_dir)
@@ -92,6 +110,8 @@ def main() -> None:
     tiles = _group_aef_by_tile(aef_dir)
     xs: list[np.ndarray] = []
     ys: list[np.ndarray] = []
+    xs_by_region: dict[str, list[np.ndarray]] = defaultdict(list)
+    ys_by_region: dict[str, list[np.ndarray]] = defaultdict(list)
     rng = np.random.default_rng(args.seed)
 
     for tile_id, years in tiles.items():
@@ -167,6 +187,10 @@ def main() -> None:
             xs.append(x)
             ys.append(y)
 
+            region = _infer_region(tile_id)
+            xs_by_region[region].append(x)
+            ys_by_region[region].append(y)
+
             logger.info(
                 "Loaded %s (%s): %d pos, %d neg",
                 tile_id,
@@ -178,14 +202,41 @@ def main() -> None:
     if not xs:
         raise RuntimeError("No training samples were collected.")
 
-    x_all = np.concatenate(xs, axis=0)
-    y_all = np.concatenate(ys, axis=0)
+    if args.val_region:
+        val_region = args.val_region.strip().lower()
+        if val_region not in xs_by_region:
+            raise ValueError(f"Validation region not found: {val_region}")
 
-    x_all, y_all = _sample_rows(x_all, y_all, args.max_samples, args.seed)
+        x_val = np.concatenate(xs_by_region[val_region], axis=0)
+        y_val = np.concatenate(ys_by_region[val_region], axis=0)
 
-    x_train, x_val, y_train, y_val = train_test_split(
-        x_all, y_all, test_size=0.2, random_state=args.seed, stratify=y_all
-    )
+        train_regions = [r for r in xs_by_region.keys() if r != val_region]
+        if not train_regions:
+            raise ValueError("No training regions available after holdout.")
+
+        x_train = np.concatenate(
+            [np.concatenate(xs_by_region[r], axis=0) for r in train_regions], axis=0
+        )
+        y_train = np.concatenate(
+            [np.concatenate(ys_by_region[r], axis=0) for r in train_regions], axis=0
+        )
+
+        x_train, y_train = _sample_rows(x_train, y_train, args.max_samples, args.seed)
+        x_val, y_val = _sample_rows(x_val, y_val, args.max_samples, args.seed + 1)
+        logger.info(
+            "Region holdout: train=%s, val=%s",
+            ", ".join(train_regions),
+            val_region,
+        )
+    else:
+        x_all = np.concatenate(xs, axis=0)
+        y_all = np.concatenate(ys, axis=0)
+
+        x_all, y_all = _sample_rows(x_all, y_all, args.max_samples, args.seed)
+
+        x_train, x_val, y_train, y_val = train_test_split(
+            x_all, y_all, test_size=0.2, random_state=args.seed, stratify=y_all
+        )
 
     model = XGBClassifier(
         n_estimators=400,

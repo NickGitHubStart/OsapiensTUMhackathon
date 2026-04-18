@@ -39,6 +39,14 @@ Train an AEF temporal-diff baseline (AEF, AEF-2020, AEF-year-1):
 python -m src.train_baseline2 --data-dir ./data/makeathon-challenge
 ```
 
+Region holdout validation (train on Thailand, validate on Colombia or vice versa):
+
+```bash
+python -m src.train_baseline2 \
+	--data-dir ./data/makeathon-challenge \
+	--val-region colombia
+```
+
 ## Patch Baseline (XGBoost)
 
 Train a patch-based XGBoost model on AlphaEarth embeddings:
