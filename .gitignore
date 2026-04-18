@@ -1,0 +1,35 @@
+# Challenge dataset (S3 download target — do not commit)
+data/
+
+# Common alternate download locations
+**/makeathon-challenge/
+
+# Trained models / outputs
+/artifacts/
+
+# Python environments
+.venv/
+venv/
+env/
+.env/
+
+# Bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+/logs
+
