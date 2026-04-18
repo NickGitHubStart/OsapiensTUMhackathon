@@ -127,8 +127,15 @@ def main() -> None:
     parser.add_argument("--min-area-ha", type=float, default=0.5)
     parser.add_argument("--apply-postprocess", action="store_true")
     parser.add_argument("--ensemble", choices=["all_data", "average_all"], default="all_data")
+    parser.add_argument("--tile-ids", default="", help="Comma-separated tile ids to run.")
     parser.add_argument("--out-dir", default="./submission/baseline3")
     parser.add_argument("--merge-out", default="")
+    parser.add_argument("--debug-stats", action="store_true", help="Log per-tile proba stats.")
+    parser.add_argument(
+        "--allow-empty-merge",
+        action="store_true",
+        help="Write merged GeoJSON even if it has zero features.",
+    )
 
     args = parser.parse_args()
     data_dir = Path(args.data_dir)
@@ -146,6 +153,10 @@ def main() -> None:
 
     aef_dir = data_dir / "aef-embeddings" / args.split
     tiles = _collect_tiles(data_dir, args.split)
+    if args.tile_ids:
+        tiles = [t.strip() for t in args.tile_ids.split(",") if t.strip()]
+        if not tiles:
+            raise ValueError("No tile ids provided in --tile-ids.")
 
     all_features: list[dict] = []
     total_features = 0
@@ -211,6 +222,20 @@ def main() -> None:
 
         pred = (proba > args.threshold).astype(np.uint8)
 
+        if args.debug_stats:
+            proba_min = float(np.nanmin(proba))
+            proba_max = float(np.nanmax(proba))
+            proba_mean = float(np.nanmean(proba))
+            frac_on = float(np.mean(proba > args.threshold))
+            logger.info(
+                "%s: proba min=%.4f max=%.4f mean=%.4f above_thr=%.5f",
+                tile_id,
+                proba_min,
+                proba_max,
+                proba_mean,
+                frac_on,
+            )
+
         apply_postprocess = args.apply_postprocess
         if apply_postprocess and _is_geographic(ref_profile.get("crs")):
             logger.warning("%s: skipping raster-space postprocess (geographic CRS)", tile_id)
@@ -242,7 +267,7 @@ def main() -> None:
         logger.info("Wrote %s", out_dir / f"{tile_id}.geojson")
 
     if args.merge_out:
-        if not all_features:
+        if not all_features and not args.allow_empty_merge:
             raise RuntimeError(
                 "Merged GeoJSON has zero features. "
                 "Lower --threshold or --min-area-ha, or inspect per-tile outputs."
