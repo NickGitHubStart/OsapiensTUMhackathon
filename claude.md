@@ -131,6 +131,19 @@ INFO:__main__:Validation report:
    macro avg       0.82      0.78      0.80     40000
 weighted avg       0.84      0.84      0.84     40000
 
+INFO:__main__:Validation report:
+              precision    recall  f1-score   support
+
+           0       0.86      0.93      0.89     28137
+           1       0.80      0.63      0.70     11863
+
+    accuracy                           0.84     40000
+   macro avg       0.83      0.78      0.80     40000
+weighted avg       0.84      0.84      0.84     40000
+
+
+
+
 INFO:__main__:Saved model to artifacts/baseline_aef_logreg.joblib
 
 

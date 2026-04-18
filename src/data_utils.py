@@ -53,23 +53,71 @@ def load_tile_labels(data_dir: Path, tile_id: str, ref_profile: dict) -> TileLab
     glads2_date = labels_dir / "glads2" / f"glads2_{tile_id}_alertDate.tif"
     radd_labels = labels_dir / "radd" / f"radd_{tile_id}_labels.tif"
 
-    if not (glads2_alert.exists() and glads2_date.exists() and radd_labels.exists()):
+    pos_sources: list[np.ndarray] = []
+    neg_sources: list[np.ndarray] = []
+
+    if glads2_alert.exists() and glads2_date.exists():
+        glads2_alert_r = reproject_to_match(glads2_alert, ref_profile)
+        glads2_date_r = reproject_to_match(glads2_date, ref_profile)
+        glads2_date = np.datetime64("2019-01-01") + glads2_date_r.astype("timedelta64[D]")
+        glads2_pos = (glads2_alert_r >= 2) & (
+            glads2_date >= np.datetime64("2020-01-01")
+        )
+        glads2_neg = glads2_alert_r == 0
+        pos_sources.append(glads2_pos)
+        neg_sources.append(glads2_neg)
+
+    if radd_labels.exists():
+        radd_r = reproject_to_match(radd_labels, ref_profile)
+        radd_conf = radd_r // 10000
+        radd_days = radd_r % 10000
+        radd_date = np.datetime64("2014-12-31") + radd_days.astype("timedelta64[D]")
+        radd_pos = (radd_conf >= 2) & (radd_date >= np.datetime64("2020-01-01"))
+        radd_neg = radd_r == 0
+        pos_sources.append(radd_pos)
+        neg_sources.append(radd_neg)
+
+    gladl_alert_paths = list((labels_dir / "gladl").glob(f"gladl_{tile_id}_alert*.tif"))
+    for alert_path in sorted(gladl_alert_paths):
+        year_str = alert_path.stem.split("_alert")[-1]
+        date_path = alert_path.with_name(f"gladl_{tile_id}_alertDate{year_str}.tif")
+        if not date_path.exists():
+            continue
+
+        try:
+            year = int(f"20{year_str}")
+        except ValueError:
+            continue
+
+        alert_r = reproject_to_match(alert_path, ref_profile)
+        date_r = reproject_to_match(date_path, ref_profile)
+        date = np.datetime64(f"{year}-01-01") + date_r.astype("timedelta64[D]")
+        year_pos = (alert_r >= 2) & (date >= np.datetime64("2020-01-01"))
+
+        if "gladl_pos" not in locals():
+            gladl_pos = year_pos
+            gladl_neg = alert_r == 0
+        else:
+            gladl_pos = gladl_pos | year_pos
+            gladl_neg = gladl_neg & (alert_r == 0)
+
+    if "gladl_pos" in locals():
+        pos_sources.append(gladl_pos)
+        neg_sources.append(gladl_neg)
+
+    if not pos_sources:
         return None
 
-    glads2_alert_r = reproject_to_match(glads2_alert, ref_profile)
-    glads2_date_r = reproject_to_match(glads2_date, ref_profile)
-    radd_r = reproject_to_match(radd_labels, ref_profile)
+    pos_stack = np.stack(pos_sources, axis=0)
+    neg_stack = np.stack(neg_sources, axis=0)
+    n_sources = pos_stack.shape[0]
+    threshold = (n_sources + 1) // 2
 
-    glads2_date = np.datetime64("2019-01-01") + glads2_date_r.astype("timedelta64[D]")
-    glads2_pos = (glads2_alert_r >= 2) & (glads2_date >= np.datetime64("2020-01-01"))
+    pos_votes = pos_stack.sum(axis=0)
+    neg_votes = neg_stack.sum(axis=0)
 
-    radd_conf = radd_r // 10000
-    radd_days = radd_r % 10000
-    radd_date = np.datetime64("2014-12-31") + radd_days.astype("timedelta64[D]")
-    radd_pos = (radd_conf >= 2) & (radd_date >= np.datetime64("2020-01-01"))
-
-    positive = glads2_pos & radd_pos
-    negative = (glads2_alert_r == 0) & (radd_r == 0)
+    positive = (pos_votes >= threshold) & (neg_votes < threshold)
+    negative = (neg_votes >= threshold) & (pos_votes < threshold)
 
     return TileLabels(positive=positive, negative=negative)
 
@@ -87,11 +135,50 @@ def label_tile_ids(labels_dir: Path) -> set[str]:
         p.name.replace("glads2_", "").replace("_alertDate.tif", "")
         for p in (labels_dir / "glads2").glob("glads2_*_alertDate.tif")
     }
-    radd = {
+    glads2_tiles = glads2_alert & glads2_date
+
+    radd_tiles = {
         p.name.replace("radd_", "").replace("_labels.tif", "")
         for p in (labels_dir / "radd").glob("radd_*_labels.tif")
     }
-    return glads2_alert & glads2_date & radd
+
+    gladl_alert = (labels_dir / "gladl").glob("gladl_*_alert*.tif")
+    gladl_date = (labels_dir / "gladl").glob("gladl_*_alertDate*.tif")
+
+    def _parse_gladl(path: Path) -> tuple[str, str] | None:
+        name = path.name
+        if "_alertDate" in name:
+            tile = name.replace("gladl_", "").split("_alertDate")[0]
+            year = name.split("_alertDate")[-1].replace(".tif", "")
+        elif "_alert" in name:
+            tile = name.replace("gladl_", "").split("_alert")[0]
+            year = name.split("_alert")[-1].replace(".tif", "")
+        else:
+            return None
+        return tile, year
+
+    gladl_alert_map: dict[str, set[str]] = {}
+    for path in gladl_alert:
+        parsed = _parse_gladl(path)
+        if parsed is None:
+            continue
+        tile, year = parsed
+        gladl_alert_map.setdefault(tile, set()).add(year)
+
+    gladl_date_map: dict[str, set[str]] = {}
+    for path in gladl_date:
+        parsed = _parse_gladl(path)
+        if parsed is None:
+            continue
+        tile, year = parsed
+        gladl_date_map.setdefault(tile, set()).add(year)
+
+    gladl_tiles: set[str] = set()
+    for tile, years in gladl_alert_map.items():
+        if tile in gladl_date_map and years & gladl_date_map[tile]:
+            gladl_tiles.add(tile)
+
+    return glads2_tiles | radd_tiles | gladl_tiles
 
 
 def build_label_mask(labels: TileLabels) -> np.ndarray:
