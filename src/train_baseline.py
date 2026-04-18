@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from pathlib import Path
 
@@ -114,6 +115,8 @@ def main() -> None:
     xs: list[np.ndarray] = []
     ys: list[np.ndarray] = []
     rng = np.random.default_rng(args.seed)
+    loaded_tiles = 0
+    total_samples = 0
 
     label_tiles = label_tile_ids(data_dir / "labels" / "train")
     logger.info("Label tiles available: %d", len(label_tiles))
@@ -174,6 +177,8 @@ def main() -> None:
 
         xs.append(x)
         ys.append(y)
+        loaded_tiles += 1
+        total_samples += x.shape[0]
 
         logger.info(
             "Loaded %s (%s): %d pos, %d neg",
@@ -210,10 +215,26 @@ def main() -> None:
     model.fit(x_train, y_train)
 
     y_pred = model.predict(x_val)
+    report = classification_report(y_val, y_pred, output_dict=True, zero_division=0)
     logger.info("Validation report:\n%s", classification_report(y_val, y_pred))
 
     joblib.dump(model, model_out)
     logger.info("Saved model to %s", model_out)
+
+    report_path = model_out.with_suffix(".json")
+    payload = {
+        "script": "train_baseline.py",
+        "data_dir": str(data_dir),
+        "model_out": str(model_out),
+        "args": vars(args),
+        "loaded_tiles": loaded_tiles,
+        "total_samples": int(total_samples),
+        "train_samples": int(x_train.shape[0]),
+        "val_samples": int(x_val.shape[0]),
+        "metrics": report,
+    }
+    report_path.write_text(json.dumps(payload, indent=2))
+    logger.info("Saved report to %s", report_path)
 
 
 if __name__ == "__main__":
