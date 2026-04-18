@@ -77,6 +77,22 @@ def _iter_aef_files(aef_dir: Path) -> Iterable[Path]:
     yield from sorted(aef_dir.glob("*.tiff"))
 
 
+def _label_tile_ids(labels_dir: Path) -> set[str]:
+    glads2_alert = {
+        p.name.replace("glads2_", "").replace("_alert.tif", "")
+        for p in (labels_dir / "glads2").glob("glads2_*_alert.tif")
+    }
+    glads2_date = {
+        p.name.replace("glads2_", "").replace("_alertDate.tif", "")
+        for p in (labels_dir / "glads2").glob("glads2_*_alertDate.tif")
+    }
+    radd = {
+        p.name.replace("radd_", "").replace("_labels.tif", "")
+        for p in (labels_dir / "radd").glob("radd_*_labels.tif")
+    }
+    return glads2_alert & glads2_date & radd
+
+
 def _sample_pixels(
     features: np.ndarray,
     labels: np.ndarray,
@@ -134,10 +150,17 @@ def main() -> None:
     xs: list[np.ndarray] = []
     ys: list[np.ndarray] = []
 
+    label_tiles = _label_tile_ids(data_dir / "labels" / "train")
+    logger.info("Label tiles available: %d", len(label_tiles))
+
     for aef_path in _iter_aef_files(aef_dir):
         tile_id, year_str = aef_path.stem.rsplit("_", 1)
         year = int(year_str)
-        if year < 2021:
+        if year < 2020:
+            continue
+
+        if tile_id not in label_tiles:
+            logger.info("Skipping %s (labels not available)", tile_id)
             continue
 
         with rasterio.open(aef_path) as src:
@@ -159,7 +182,12 @@ def main() -> None:
         neg_features = flat[neg_idx]
 
         if pos_features.size == 0 or neg_features.size == 0:
-            logger.info("Skipping %s (no positives or negatives)", tile_id)
+            logger.info(
+                "Skipping %s (pos=%d, neg=%d)",
+                tile_id,
+                pos_features.shape[0],
+                neg_features.shape[0],
+            )
             continue
 
         rng = np.random.default_rng(args.seed)
