@@ -47,6 +47,17 @@ python -m src.train_baseline2 \
 	--val-region colombia
 ```
 
+## Baseline3 (Region Ensemble)
+
+Train two region-holdout models plus a full-data model, and save an ensemble bundle:
+
+```bash
+python -m src.train_baseline3 \
+	--data-dir ./data/makeathon-challenge \
+	--max-samples 200000 \
+	--per-tile-samples 50000
+```
+
 ## Patch Baseline (XGBoost)
 
 Train a patch-based XGBoost model on AlphaEarth embeddings:
