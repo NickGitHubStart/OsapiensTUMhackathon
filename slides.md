@@ -50,7 +50,6 @@ At inference: probabilities from all three models are averaged.
 
 ---
 
-# Slide 2: Leaderboard Submissions
 
 All three submissions below use the **Baseline 3 ensemble** (the 3-model bundle described above). Labels during training were built via **majority vote across three weak-label sources**: RADD, GLAD-L, and GLAD-S2. A pixel is labeled positive if at least 2 of the 3 sources flag deforestation post-2020.
 
@@ -105,7 +104,7 @@ All three submissions below use the **Baseline 3 ensemble** (the 3-model bundle 
 
 ---
 
-# Slide 3: What's Next
+# What's Next
 
 ## Submission 4 (planned) — Label confidence weighting
 
