@@ -31,8 +31,10 @@ End-to-end pipeline for the Osapiens Terra deforestation challenge: predict defo
 │   └── predict_polygon.py     # turn raster predictions into a GeoJSON submission
 └── submissions/
     ├── README.md
-    ├── sub3_baseline3_44.98pct.geojson   # the 44.98 % leaderboard file
-    └── sub6_baseline3_peryear.geojson    # same recipe + per-polygon time_step
+    ├── sub3_baseline3_44.98pct.geojson         # 44.98 % leaderboard file
+    ├── sub6_baseline3_peryear.geojson          # 40.71 % per-year polygons
+    ├── sub7_sub3polys_with_timestep.geojson    # Sub 3 polys + time_step (candidate)
+    └── sub8_baseline3plus_singlemask.geojson   # Baseline 3+ + time_step (candidate)
 ```
 
 ---
@@ -130,12 +132,27 @@ All three confirmed leaderboard results below use the **Baseline 3 regional XGB 
 - Union IoU **44.98 %** · Recall 70.52 % · FPR 44.61 %. Year **0 %** (single submission with `time_step=null`).
 - Proper spatial post-processing in the correct coordinate system — the largest single jump and the current top score.
 
-### Submission 6 — Sub 3 recipe + per-year `time_step` (candidate, ready to upload)
+### Submission 6 — Sub 3 recipe + per-year polygons (40.71 %, −4.3)
 
-- **Same Baseline 3 ensemble, same geometric mean, same threshold 0.50, same UTM closing 5×5 + opening 3×3, same 1.0 ha min area.** The only change is that we run inference once per year (2021…2025), pick the year of maximum probability per pixel, polygonise, and write `properties.time_step = YY06` per polygon based on the dominant year inside its footprint.
-- File: `submissions/sub6_baseline3_peryear.geojson` (732 polygons, ~2 MB, all `Polygon`).
-- Year split: 2106=100, 2206=115, 2306=144, 2406=203, 2506=170 (i.e. the model finds deforestation across all 5 years, weighted slightly toward 2024).
-- Expected: Union IoU ≈ Sub 3 (the spatial mask is essentially the same), but Year metric > 0 instead of 0.
+- **Same Baseline 3 ensemble, same geometric mean, same threshold 0.50, same UTM closing 5×5 + opening 3×3, same 1.0 ha min area.** The change was that inference was done **per year** (732 polygons, one per year of max prob per pixel) instead of a single fused mask.
+- File: `submissions/sub6_baseline3_peryear.geojson`.
+- Result: Union IoU **40.71 %** · Recall 72.78 % · FPR 51.98 % · Year **7.31 %**.
+- **Lesson**: per-year polygonisation injects extra false positives (FPR up 7 pts vs Sub 3) — splitting the mask 5 ways is not free. The Year metric finally went non-zero, but the Union IoU loss outweighed the gain. Conclusion: keep Sub 3's single fused mask, just add `time_step` on top — that's Sub 7.
+
+### Submission 7 — Sub 3 polygons, relabelled (candidate)
+
+- **Byte-identical 711 polygons of Sub 3** (so the proven 44.98 % spatial mask is preserved exactly), with `properties.time_step = YY06` set per polygon by computing the **mean Baseline 3 probability inside each polygon for each year 2021–2025 and picking the argmax year**.
+- File: `submissions/sub7_sub3polys_with_timestep.geojson` (711 polygons, all `Polygon`).
+- Year split: 2106=77, 2206=81, 2306=208, 2406=118, 2506=227.
+- **Expectation**: Union IoU ≈ **44.98 %** (geometry is identical to Sub 3), Recall ≈ 70.5 %, FPR ≈ 44.6 %, Year **>0** (vs Sub 3's 0). **Why**: the spatial mask is unchanged, so the Union IoU / Recall / FPR are mathematically the same as Sub 3; the only added information is the temporal label, which is computed from the same model probabilities Sub 3 was generated from, and uses the most defensible heuristic ("the year the model is most confident inside this polygon") rather than a noisy "first crossing" signal.
+
+### Submission 8 — Baseline 3+, single fused mask + per-polygon `time_step` (candidate)
+
+- New, beefier model: `baseline3plus_aef_xgb.joblib` — **800 trees, max_depth 8, learning rate 0.04, 1.5 M training samples** (vs 400 trees, depth 6, lr 0.05, 200 K samples for the original Baseline 3). Cross-region F1: Thailand 0.612 (P 0.874 · R 0.471), Colombia 0.593 (P 0.909 · R 0.440) — **higher precision, lower recall** than Baseline 3.
+- Built with the **same Sub 3 post-processing recipe**: per-year geom-mean → max over years → threshold 0.50 → UTM closing 5×5 + opening 3×3 → 1.0 ha min area. Then per-polygon `time_step` from year-of-max mean prob inside polygon (same logic as Sub 7).
+- File: `submissions/sub8_baseline3plus_singlemask.geojson` (674 polygons — 5 % fewer than Sub 3, the model is more conservative).
+- Year split: 2106=42, 2206=82, 2306=80, 2406=252, 2506=218.
+- **Expectation**: a small Union IoU gain over Sub 3 — likely **45–47 %**. **Why**: Sub 3's main weakness was FPR 44.61 %; the new model's higher precision (0.87–0.91 vs 0.86–0.93) and noticeably lower recall mean it should produce fewer false-positive polygons (already visible: 5 % fewer polygons than Sub 3). Plus a non-zero Year score from the same `time_step` strategy as Sub 7. **Risk**: if recall drops too far on the Africa OOD tile (33NTE), Union IoU could *also* drop — that's the only scenario where Sub 8 underperforms Sub 3. We rate Sub 7 as the safer bet (high confidence, ≈ 44.98 % + Year), Sub 8 as the higher-upside bet (45–47 % + Year).
 
 ---
 

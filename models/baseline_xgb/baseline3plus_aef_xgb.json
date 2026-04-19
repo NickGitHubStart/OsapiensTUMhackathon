@@ -1,0 +1,74 @@
+{
+  "script": "train_baseline3.py",
+  "data_dir": "data/makeathon-challenge",
+  "model_out": "models/baseline_xgb/baseline3plus_aef_xgb.joblib",
+  "args": {
+    "data_dir": "./data/makeathon-challenge",
+    "max_samples": 1500000,
+    "per_tile_samples": 200000,
+    "neg_pos_ratio": 3,
+    "seed": 7,
+    "model_out": "models/baseline_xgb/baseline3plus_aef_xgb.joblib",
+    "n_estimators": 800,
+    "max_depth": 8,
+    "learning_rate": 0.04
+  },
+  "loaded_tiles": 96,
+  "total_samples": 21176706,
+  "reports": {
+    "holdout_thailand": {
+      "0": {
+        "precision": 0.7812411845372912,
+        "recall": 0.9652363727205603,
+        "f1-score": 0.8635466331060966,
+        "support": 992733.0
+      },
+      "1": {
+        "precision": 0.8737996504084663,
+        "recall": 0.47105567679348354,
+        "f1-score": 0.6121227724344811,
+        "support": 507267.0
+      },
+      "accuracy": 0.7981153333333333,
+      "macro avg": {
+        "precision": 0.8275204174728787,
+        "recall": 0.7181460247570219,
+        "f1-score": 0.7378347027702888,
+        "support": 1500000.0
+      },
+      "weighted avg": {
+        "precision": 0.8125424214086734,
+        "recall": 0.7981153333333333,
+        "f1-score": 0.7785206147518909,
+        "support": 1500000.0
+      }
+    },
+    "holdout_colombia": {
+      "0": {
+        "precision": 0.7307498506019897,
+        "recall": 0.9718712659460842,
+        "f1-score": 0.8342370190196278,
+        "support": 914723.0
+      },
+      "1": {
+        "precision": 0.909225933230082,
+        "recall": 0.4403402149751314,
+        "f1-score": 0.5933295576981518,
+        "support": 585277.0
+      },
+      "accuracy": 0.764476,
+      "macro avg": {
+        "precision": 0.8199878919160359,
+        "recall": 0.7061057404606078,
+        "f1-score": 0.7137832883588897,
+        "support": 1500000.0
+      },
+      "weighted avg": {
+        "precision": 0.8003884814102045,
+        "recall": 0.764476,
+        "f1-score": 0.7402386215263949,
+        "support": 1500000.0
+      }
+    }
+  }
+}

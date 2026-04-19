@@ -68,11 +68,16 @@ def _sample_features(features: np.ndarray, max_samples: int, rng: np.random.Gene
     return features[idx]
 
 
-def _make_model(seed: int) -> XGBClassifier:
+def _make_model(
+    seed: int,
+    n_estimators: int = 400,
+    max_depth: int = 6,
+    learning_rate: float = 0.05,
+) -> XGBClassifier:
     return XGBClassifier(
-        n_estimators=400,
-        max_depth=6,
-        learning_rate=0.05,
+        n_estimators=n_estimators,
+        max_depth=max_depth,
+        learning_rate=learning_rate,
         subsample=0.8,
         colsample_bytree=0.8,
         objective="binary:logistic",
@@ -89,8 +94,11 @@ def _train_and_eval(
     x_val: np.ndarray,
     y_val: np.ndarray,
     seed: int,
+    n_estimators: int = 400,
+    max_depth: int = 6,
+    learning_rate: float = 0.05,
 ) -> tuple[XGBClassifier, dict]:
-    model = _make_model(seed)
+    model = _make_model(seed, n_estimators, max_depth, learning_rate)
     model.fit(x_train, y_train)
     y_pred = model.predict(x_val)
     report = classification_report(y_val, y_pred, output_dict=True, zero_division=0)
@@ -135,6 +143,9 @@ def main() -> None:
         default="./artifacts/baseline3_aef_xgb_ensemble.joblib",
         help="Where to save the ensemble bundle",
     )
+    parser.add_argument("--n-estimators", type=int, default=400)
+    parser.add_argument("--max-depth", type=int, default=6)
+    parser.add_argument("--learning-rate", type=float, default=0.05)
 
     args = parser.parse_args()
     data_dir = Path(args.data_dir)
@@ -266,7 +277,12 @@ def main() -> None:
         x_train, y_train = _sample_rows(x_train, y_train, args.max_samples, args.seed)
         x_val, y_val = _sample_rows(x_val, y_val, args.max_samples, args.seed + 1)
 
-        model, report = _train_and_eval(x_train, y_train, x_val, y_val, args.seed)
+        model, report = _train_and_eval(
+            x_train, y_train, x_val, y_val, args.seed,
+            n_estimators=args.n_estimators,
+            max_depth=args.max_depth,
+            learning_rate=args.learning_rate,
+        )
         models[f"holdout_{holdout}"] = model
         reports[f"holdout_{holdout}"] = report
         logger.info("Holdout %s report saved.", holdout)
@@ -276,7 +292,12 @@ def main() -> None:
     y_all = np.concatenate([np.concatenate(ys_by_region[r], axis=0) for r in all_regions], axis=0)
     x_all, y_all = _sample_rows(x_all, y_all, args.max_samples, args.seed)
 
-    model_all = _make_model(args.seed)
+    model_all = _make_model(
+        args.seed,
+        n_estimators=args.n_estimators,
+        max_depth=args.max_depth,
+        learning_rate=args.learning_rate,
+    )
     model_all.fit(x_all, y_all)
     models["all"] = model_all
 
