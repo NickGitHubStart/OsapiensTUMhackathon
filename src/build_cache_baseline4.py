@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import json
 import logging
 import re
@@ -601,6 +602,12 @@ def main() -> None:
     parser.add_argument("--min-year", type=int, default=2020)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--max-tiles", type=int, default=0)
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=1,
+        help="Number of parallel workers (use 1 to disable).",
+    )
 
     args = parser.parse_args()
     data_dir = Path(args.data_dir)
@@ -625,23 +632,58 @@ def main() -> None:
             continue
 
         tiles = _group_aef_by_tile(aef_dir)
+        tile_items = sorted(tiles.items())
+        if args.max_tiles:
+            tile_items = tile_items[: args.max_tiles]
         out_dir = cache_dir / split
-        count = 0
+        total_tiles = len(tile_items)
 
-        for tile_id, year_map in sorted(tiles.items()):
-            _build_tile_cache(
-                data_dir=data_dir,
-                split=split,
-                tile_id=tile_id,
-                years=feature_years,
-                aef_paths=year_map,
-                out_dir=out_dir,
-                feature_dim=spec["feature_dim"],
-                force=args.force,
-            )
-            count += 1
-            if args.max_tiles and count >= args.max_tiles:
-                break
+        logger.info("Building cache for split=%s (%d tiles)", split, total_tiles)
+
+        if args.num_workers <= 1:
+            for idx, (tile_id, year_map) in enumerate(tile_items, start=1):
+                if total_tiles > 0:
+                    pct = (idx / total_tiles) * 100
+                    logger.info("Processing %s (%d/%d, %.1f%%)", tile_id, idx, total_tiles, pct)
+
+                _build_tile_cache(
+                    data_dir=data_dir,
+                    split=split,
+                    tile_id=tile_id,
+                    years=feature_years,
+                    aef_paths=year_map,
+                    out_dir=out_dir,
+                    feature_dim=spec["feature_dim"],
+                    force=args.force,
+                )
+        else:
+            logger.info("Using %d workers for split=%s", args.num_workers, split)
+            futures = {}
+            with ProcessPoolExecutor(max_workers=args.num_workers) as executor:
+                for tile_id, year_map in tile_items:
+                    future = executor.submit(
+                        _build_tile_cache,
+                        data_dir,
+                        split,
+                        tile_id,
+                        feature_years,
+                        year_map,
+                        out_dir,
+                        spec["feature_dim"],
+                        args.force,
+                    )
+                    futures[future] = tile_id
+
+                for idx, future in enumerate(as_completed(futures), start=1):
+                    tile_id = futures[future]
+                    try:
+                        future.result()
+                    except Exception as exc:
+                        logger.warning("Tile %s failed: %s", tile_id, exc)
+
+                    if total_tiles > 0:
+                        pct = (idx / total_tiles) * 100
+                        logger.info("Completed %s (%d/%d, %.1f%%)", tile_id, idx, total_tiles, pct)
 
 
 if __name__ == "__main__":
