@@ -626,7 +626,9 @@ def _build_tile_cache(
     else:
         vv_drop = np.full((ref_profile["height"], ref_profile["width"]), np.nan, dtype=np.float32)
 
-    forest_mask = np.ones_like(aef_2020[0], dtype=np.uint8)
+    height = ref_profile["height"]
+    width = ref_profile["width"]
+    forest_mask = np.ones((height, width), dtype=np.uint8)
 
     if split == "train":
         labels = _load_consensus_labels(data_dir, tile_id, ref_profile)
@@ -635,8 +637,8 @@ def _build_tile_cache(
             return
         label_mask, weight = labels
     else:
-        label_mask = np.full_like(aef_2020[0], -1, dtype=np.int8)
-        weight = np.zeros_like(aef_2020[0], dtype=np.float32)
+        label_mask = np.full((height, width), -1, dtype=np.int8)
+        weight = np.zeros((height, width), dtype=np.float32)
 
     transform_gdal = np.array(ref_profile["transform"].to_gdal(), dtype=np.float64)
     crs_wkt = str(ref_profile["crs"]) if ref_profile["crs"] is not None else ""
@@ -668,7 +670,7 @@ def main() -> None:
     parser.add_argument("--max-tiles", type=int, default=0)
     parser.add_argument(
         "--feature-set",
-        choices=["all", "s1-only"],
+        choices=["all", "aef-s1", "s1-only"],
         default="all",
         help="Which modalities to include in the cache.",
     )
@@ -690,6 +692,11 @@ def main() -> None:
         use_s1 = True
         use_s2 = False
         modalities = ["s1"]
+    elif args.feature_set == "aef-s1":
+        use_aef = True
+        use_s1 = True
+        use_s2 = False
+        modalities = ["aef", "s1"]
     else:
         use_aef = True
         use_s1 = True
