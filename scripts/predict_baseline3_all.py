@@ -99,7 +99,7 @@ def _predict_baseline2(aef: np.ndarray, aef_2020: np.ndarray, aef_prev: np.ndarr
 
 
 def _combine_probs(probs: list[np.ndarray], mode: str) -> np.ndarray:
-    stack = np.stack(probs, axis=0)
+    stack = np.stack(probs, axis=0) 
     if mode == "mean":
         return np.mean(stack, axis=0)
     if mode == "min":

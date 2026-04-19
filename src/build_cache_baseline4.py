@@ -218,82 +218,82 @@ def _load_consensus_labels(
     glads2_date = labels_dir / "glads2" / f"glads2_{tile_id}_alertDate.tif"
     radd_labels = labels_dir / "radd" / f"radd_{tile_id}_labels.tif"
 
-    pos_sources: list[np.ndarray] = []
-    neg_sources: list[np.ndarray] = []
+    # --- New consensus confidence and label/weight logic ---
+    height = ref_profile["height"]
+    width = ref_profile["width"]
+    confidences = []
 
-    if glads2_alert.exists() and glads2_date.exists():
-        glads2_alert_r = reproject_to_match(glads2_alert, ref_profile)
-        glads2_date_r = reproject_to_match(glads2_date, ref_profile)
-        glads2_date = np.datetime64("2019-01-01") + glads2_date_r.astype("timedelta64[D]")
-        glads2_pos = (glads2_alert_r >= 2) & (glads2_date >= np.datetime64("2020-01-01"))
-        glads2_neg = glads2_alert_r == 0
-        pos_sources.append(glads2_pos)
-        neg_sources.append(glads2_neg)
-
+    # RADD
     if radd_labels.exists():
         radd_r = reproject_to_match(radd_labels, ref_profile)
-        radd_conf = radd_r // 10000
-        radd_days = radd_r % 10000
-        radd_date = np.datetime64("2014-12-31") + radd_days.astype("timedelta64[D]")
-        radd_pos = (radd_conf >= 2) & (radd_date >= np.datetime64("2020-01-01"))
-        radd_neg = radd_r == 0
-        pos_sources.append(radd_pos)
-        neg_sources.append(radd_neg)
+        # confidence_radd = 0 if radd==0 else (0.5 if radd//10000==2 else 1.0)
+        conf_radd = np.zeros((height, width), dtype=np.float32)
+        mask_radd = radd_r != 0
+        conf_radd[mask_radd] = np.where((radd_r[mask_radd] // 10000) == 2, 0.5, 1.0)
+        confidences.append(conf_radd)
+    else:
+        conf_radd = None
 
+    # GLAD-L (take max confidence across years)
     gladl_alert_paths = list((labels_dir / "gladl").glob(f"gladl_{tile_id}_alert*.tif"))
-    gladl_pos: np.ndarray | None = None
-    gladl_neg: np.ndarray | None = None
+    conf_gladl = None
+    if gladl_alert_paths:
+        gladl_conf_stack = []
+        for alert_path in sorted(gladl_alert_paths):
+            alert_r = reproject_to_match(alert_path, ref_profile)
+            # confidence_gladl = {0:0.0, 2:0.5, 3:1.0}[gladl]
+            conf = np.zeros((height, width), dtype=np.float32)
+            conf[alert_r == 2] = 0.5
+            conf[alert_r == 3] = 1.0
+            gladl_conf_stack.append(conf)
+        if gladl_conf_stack:
+            conf_gladl = np.max(np.stack(gladl_conf_stack, axis=0), axis=0)
+            confidences.append(conf_gladl)
 
-    for alert_path in sorted(gladl_alert_paths):
-        year_str = alert_path.stem.split("_alert")[-1]
-        date_path = alert_path.with_name(f"gladl_{tile_id}_alertDate{year_str}.tif")
-        if not date_path.exists():
-            continue
-        try:
-            year = int(f"20{year_str}")
-        except ValueError:
-            continue
+    # GLAD-S2
+    if glads2_alert.exists():
+        glads2_alert_r = reproject_to_match(glads2_alert, ref_profile)
+        # confidence_glads2 = {0:0.0, 1:0.1, 2:0.3, 3:0.7, 4:1.0}[glads2]
+        conf_glads2 = np.zeros((height, width), dtype=np.float32)
+        conf_glads2[glads2_alert_r == 1] = 0.1
+        conf_glads2[glads2_alert_r == 2] = 0.3
+        conf_glads2[glads2_alert_r == 3] = 0.7
+        conf_glads2[glads2_alert_r == 4] = 1.0
+        confidences.append(conf_glads2)
+    else:
+        conf_glads2 = None
 
-        alert_r = reproject_to_match(alert_path, ref_profile)
-        date_r = reproject_to_match(date_path, ref_profile)
-        date = np.datetime64(f"{year}-01-01") + date_r.astype("timedelta64[D]")
-        year_pos = (alert_r >= 2) & (date >= np.datetime64("2020-01-01"))
-        year_neg = alert_r == 0
-
-        if gladl_pos is None:
-            gladl_pos = year_pos
-            gladl_neg = year_neg
-        else:
-            gladl_pos = gladl_pos | year_pos
-            gladl_neg = gladl_neg & year_neg
-
-    if gladl_pos is not None and gladl_neg is not None:
-        pos_sources.append(gladl_pos)
-        neg_sources.append(gladl_neg)
-
-    if not pos_sources:
+    if not confidences:
         return None
 
-    pos_stack = np.stack(pos_sources, axis=0)
-    neg_stack = np.stack(neg_sources, axis=0)
+    # Consensus confidence: mean of available confidences (only where source is present)
+    consensus_conf = np.zeros((height, width), dtype=np.float32)
+    count = np.zeros((height, width), dtype=np.float32)
+    for conf in confidences:
+        present = conf > 0
+        consensus_conf[present] += conf[present]
+        count[present] += 1
+    # Avoid division by zero
+    valid = count > 0
+    consensus_conf[valid] = consensus_conf[valid] / count[valid]
+    consensus_conf[~valid] = 0.0
 
-    pos_votes = pos_stack.sum(axis=0)
-    neg_votes = neg_stack.sum(axis=0)
-    n_available = pos_votes + neg_votes
-    threshold = (n_available // 2) + 1
+    # Derive label and weight
+    labels = np.full((height, width), 0, dtype=np.int8)
+    weights = np.full((height, width), 0.05, dtype=np.float32)  # default ambiguous
+    # If consensus_conf > 0.5: label=1, weight=consensus_conf
+    mask_pos = consensus_conf > 0.5
+    labels[mask_pos] = 1
+    weights[mask_pos] = consensus_conf[mask_pos]
+    # If consensus_conf < 0.15: label=0, weight=1.0
+    mask_neg = consensus_conf < 0.15
+    labels[mask_neg] = 0
+    weights[mask_neg] = 1.0
+    # Ambiguous middle: already set to label=0, weight=0.05
 
-    positive = (pos_votes >= threshold) & (neg_votes < threshold)
-    negative = (neg_votes >= threshold) & (pos_votes < threshold)
-
-    labels = np.full(pos_votes.shape, -1, dtype=np.int8)
-    labels[positive] = 1
-    labels[negative] = 0
-
-    weights = np.zeros(pos_votes.shape, dtype=np.float32)
-    agree = np.maximum(pos_votes, neg_votes)
-    valid = n_available > 0
-    weights[valid] = agree[valid] / n_available[valid]
-    weights[labels == -1] = 0.0
+    # If no sources at all, set weight=0.0 (ignore in training)
+    labels[count == 0] = 0
+    weights[count == 0] = 0.0
 
     return labels, weights
 

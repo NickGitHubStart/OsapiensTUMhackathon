@@ -149,6 +149,93 @@ def load_tile_labels(data_dir: Path, tile_id: str, ref_profile: dict) -> TileLab
     return TileLabels(positive=positive, negative=negative)
 
 
+def load_tile_label_confidence(
+    data_dir: Path,
+    tile_id: str,
+    ref_profile: dict,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    labels_dir = data_dir / "labels" / "train"
+
+    glads2_alert = labels_dir / "glads2" / f"glads2_{tile_id}_alert.tif"
+    glads2_date = labels_dir / "glads2" / f"glads2_{tile_id}_alertDate.tif"
+    radd_labels = labels_dir / "radd" / f"radd_{tile_id}_labels.tif"
+
+    conf_sources: list[np.ndarray] = []
+
+    if glads2_alert.exists() and glads2_date.exists():
+        glads2_alert_r = reproject_to_match(glads2_alert, ref_profile)
+        glads2_date_r = reproject_to_match(glads2_date, ref_profile)
+        glads2_date = np.datetime64("2019-01-01") + glads2_date_r.astype("timedelta64[D]")
+        date_mask = glads2_date >= np.datetime64("2020-01-01")
+
+        conf = np.zeros_like(glads2_alert_r, dtype=np.float32)
+        conf[glads2_alert_r == 1] = 0.1
+        conf[glads2_alert_r == 2] = 0.3
+        conf[glads2_alert_r == 3] = 0.7
+        conf[glads2_alert_r >= 4] = 1.0
+        conf[~date_mask] = 0.0
+        conf_sources.append(conf)
+
+    if radd_labels.exists():
+        radd_r = reproject_to_match(radd_labels, ref_profile)
+        radd_conf = radd_r // 10000
+        radd_days = radd_r % 10000
+        radd_date = np.datetime64("2014-12-31") + radd_days.astype("timedelta64[D]")
+        date_mask = radd_date >= np.datetime64("2020-01-01")
+
+        conf = np.zeros_like(radd_r, dtype=np.float32)
+        conf[radd_conf == 2] = 0.5
+        conf[radd_conf >= 3] = 1.0
+        conf[~date_mask] = 0.0
+        conf_sources.append(conf)
+
+    gladl_alert_paths = list((labels_dir / "gladl").glob(f"gladl_{tile_id}_alert*.tif"))
+    gladl_confs: list[np.ndarray] = []
+    for alert_path in sorted(gladl_alert_paths):
+        year_str = alert_path.stem.split("_alert")[-1]
+        date_path = alert_path.with_name(f"gladl_{tile_id}_alertDate{year_str}.tif")
+        if not date_path.exists():
+            continue
+
+        try:
+            year = int(f"20{year_str}")
+        except ValueError:
+            continue
+
+        alert_r = reproject_to_match(alert_path, ref_profile)
+        date_r = reproject_to_match(date_path, ref_profile)
+        date = np.datetime64(f"{year}-01-01") + date_r.astype("timedelta64[D]")
+        date_mask = date >= np.datetime64("2020-01-01")
+
+        conf = np.zeros_like(alert_r, dtype=np.float32)
+        conf[alert_r == 2] = 0.5
+        conf[alert_r >= 3] = 1.0
+        conf[~date_mask] = 0.0
+        gladl_confs.append(conf)
+
+    if gladl_confs:
+        conf_sources.append(np.nanmax(np.stack(gladl_confs, axis=0), axis=0))
+
+    if not conf_sources:
+        return None
+
+    consensus_conf = np.mean(np.stack(conf_sources, axis=0), axis=0).astype(np.float32)
+
+    label = np.zeros(consensus_conf.shape, dtype=np.int8)
+    weight = np.zeros(consensus_conf.shape, dtype=np.float32)
+
+    pos_mask = consensus_conf > 0.5
+    neg_mask = consensus_conf < 0.15
+    amb_mask = ~(pos_mask | neg_mask)
+
+    label[pos_mask] = 1
+    weight[pos_mask] = consensus_conf[pos_mask]
+    weight[neg_mask] = 1.0
+    weight[amb_mask] = 0.05
+
+    return label, weight
+
+
 def iter_aef_files(aef_dir: Path) -> Iterable[Path]:
     yield from sorted(aef_dir.glob("*.tiff"))
 

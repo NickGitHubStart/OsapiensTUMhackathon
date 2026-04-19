@@ -14,7 +14,7 @@ import rasterio
 from sklearn.metrics import classification_report
 from xgboost import XGBClassifier
 
-from src.data_utils import iter_aef_files, label_tile_ids, load_tile_labels
+from src.data_utils import iter_aef_files, label_tile_ids, load_tile_label_confidence
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -48,16 +48,17 @@ def _infer_region(tile_id: str) -> str:
 def _sample_rows(
     features: np.ndarray,
     labels: np.ndarray,
+    weights: np.ndarray,
     max_samples: int,
     seed: int,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     rng = np.random.default_rng(seed)
     n = labels.shape[0]
     if n <= max_samples:
-        return features, labels
+        return features, labels, weights
 
     idx = rng.choice(n, size=max_samples, replace=False)
-    return features[idx], labels[idx]
+    return features[idx], labels[idx], weights[idx]
 
 
 def _sample_features(features: np.ndarray, max_samples: int, rng: np.random.Generator) -> np.ndarray:
@@ -66,6 +67,19 @@ def _sample_features(features: np.ndarray, max_samples: int, rng: np.random.Gene
         return features
     idx = rng.choice(n, size=max_samples, replace=False)
     return features[idx]
+
+
+def _sample_features_with_weights(
+    features: np.ndarray,
+    weights: np.ndarray,
+    max_samples: int,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    n = features.shape[0]
+    if n <= max_samples:
+        return features, weights
+    idx = rng.choice(n, size=max_samples, replace=False)
+    return features[idx], weights[idx]
 
 
 def _make_model(seed: int) -> XGBClassifier:
@@ -83,17 +97,28 @@ def _make_model(seed: int) -> XGBClassifier:
     )
 
 
+def _compute_iou(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    tp = int(((y_true == 1) & (y_pred == 1)).sum())
+    fp = int(((y_true == 0) & (y_pred == 1)).sum())
+    fn = int(((y_true == 1) & (y_pred == 0)).sum())
+    denom = tp + fp + fn
+    return tp / denom if denom > 0 else 0.0
+
+
 def _train_and_eval(
     x_train: np.ndarray,
     y_train: np.ndarray,
+    w_train: np.ndarray,
     x_val: np.ndarray,
     y_val: np.ndarray,
     seed: int,
 ) -> tuple[XGBClassifier, dict]:
     model = _make_model(seed)
-    model.fit(x_train, y_train)
+    model.fit(x_train, y_train, sample_weight=w_train)
     y_pred = model.predict(x_val)
     report = classification_report(y_val, y_pred, output_dict=True, zero_division=0)
+    iou = _compute_iou(y_val, y_pred)
+    report["iou"] = iou
     return model, report
 
 
@@ -132,7 +157,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--model-out",
-        default="./artifacts/baseline3_aef_xgb_ensemble.joblib",
+        default="./artifacts/baseline3_weighted.joblib",
         help="Where to save the ensemble bundle",
     )
 
@@ -148,6 +173,7 @@ def main() -> None:
     tiles = _group_aef_by_tile(aef_dir)
     xs_by_region: dict[str, list[np.ndarray]] = defaultdict(list)
     ys_by_region: dict[str, list[np.ndarray]] = defaultdict(list)
+    ws_by_region: dict[str, list[np.ndarray]] = defaultdict(list)
     rng = np.random.default_rng(args.seed)
     loaded_tiles = 0
     total_samples = 0
@@ -165,10 +191,11 @@ def main() -> None:
             aef_2020 = src.read().astype(np.float32)
             ref_profile = src.profile
 
-        labels = load_tile_labels(data_dir, tile_id, ref_profile)
-        if labels is None:
+        label_payload = load_tile_label_confidence(data_dir, tile_id, ref_profile)
+        if label_payload is None:
             logger.warning("Missing labels for %s, skipping", tile_id)
             continue
+        label_mask, weight_mask = label_payload
 
         for year, path in sorted(years.items()):
             if year < 2020:
@@ -197,11 +224,15 @@ def main() -> None:
 
             features = np.concatenate([base, d2020, dprev], axis=1)
 
-            pos_idx = labels.positive.reshape(-1)
-            neg_idx = labels.negative.reshape(-1)
+            flat_labels = label_mask.reshape(-1)
+            flat_weights = weight_mask.reshape(-1)
+            pos_idx = flat_labels == 1
+            neg_idx = flat_labels == 0
 
             pos_features = features[pos_idx]
             neg_features = features[neg_idx]
+            pos_weights = flat_weights[pos_idx]
+            neg_weights = flat_weights[neg_idx]
 
             if pos_features.size == 0 or neg_features.size == 0:
                 logger.info(
@@ -216,9 +247,16 @@ def main() -> None:
             n_pos = pos_features.shape[0]
             n_neg = min(neg_features.shape[0], n_pos * args.neg_pos_ratio)
             neg_sel = rng.choice(neg_features.shape[0], size=n_neg, replace=False)
+            neg_features = neg_features[neg_sel]
+            neg_weights = neg_weights[neg_sel]
 
-            pos_features = _sample_features(pos_features, args.per_tile_samples, rng)
-            neg_features = _sample_features(neg_features[neg_sel], args.per_tile_samples, rng)
+            pos_features, pos_weights = _sample_features_with_weights(
+                pos_features, pos_weights, args.per_tile_samples, rng
+            )
+            neg_features, neg_weights = _sample_features_with_weights(
+                neg_features, neg_weights, args.per_tile_samples, rng
+            )
+
             x = np.concatenate([pos_features, neg_features], axis=0)
             y = np.concatenate(
                 [
@@ -227,10 +265,12 @@ def main() -> None:
                 ],
                 axis=0,
             )
+            w = np.concatenate([pos_weights, neg_weights], axis=0)
 
             region = _infer_region(tile_id)
             xs_by_region[region].append(x)
             ys_by_region[region].append(y)
+            ws_by_region[region].append(w)
 
             loaded_tiles += 1
             total_samples += x.shape[0]
@@ -260,24 +300,40 @@ def main() -> None:
         y_train = np.concatenate(
             [np.concatenate(ys_by_region[r], axis=0) for r in train_regions], axis=0
         )
+        w_train = np.concatenate(
+            [np.concatenate(ws_by_region[r], axis=0) for r in train_regions], axis=0
+        )
         x_val = np.concatenate(xs_by_region[holdout], axis=0)
         y_val = np.concatenate(ys_by_region[holdout], axis=0)
+        w_val = np.concatenate(ws_by_region[holdout], axis=0)
 
-        x_train, y_train = _sample_rows(x_train, y_train, args.max_samples, args.seed)
-        x_val, y_val = _sample_rows(x_val, y_val, args.max_samples, args.seed + 1)
+        x_train, y_train, w_train = _sample_rows(
+            x_train, y_train, w_train, args.max_samples, args.seed
+        )
+        x_val, y_val, w_val = _sample_rows(
+            x_val, y_val, w_val, args.max_samples, args.seed + 1
+        )
 
-        model, report = _train_and_eval(x_train, y_train, x_val, y_val, args.seed)
+        model, report = _train_and_eval(x_train, y_train, w_train, x_val, y_val, args.seed)
         models[f"holdout_{holdout}"] = model
         reports[f"holdout_{holdout}"] = report
-        logger.info("Holdout %s report saved.", holdout)
+        logger.info(
+            "Holdout %s: IoU=%.4f  precision=%.4f  recall=%.4f  f1=%.4f",
+            holdout,
+            report.get("iou", 0.0),
+            report.get("1", {}).get("precision", 0.0),
+            report.get("1", {}).get("recall", 0.0),
+            report.get("1", {}).get("f1-score", 0.0),
+        )
 
     all_regions = list(xs_by_region.keys())
     x_all = np.concatenate([np.concatenate(xs_by_region[r], axis=0) for r in all_regions], axis=0)
     y_all = np.concatenate([np.concatenate(ys_by_region[r], axis=0) for r in all_regions], axis=0)
-    x_all, y_all = _sample_rows(x_all, y_all, args.max_samples, args.seed)
+    w_all = np.concatenate([np.concatenate(ws_by_region[r], axis=0) for r in all_regions], axis=0)
+    x_all, y_all, w_all = _sample_rows(x_all, y_all, w_all, args.max_samples, args.seed)
 
     model_all = _make_model(args.seed)
-    model_all.fit(x_all, y_all)
+    model_all.fit(x_all, y_all, sample_weight=w_all)
     models["all"] = model_all
 
     bundle = {
