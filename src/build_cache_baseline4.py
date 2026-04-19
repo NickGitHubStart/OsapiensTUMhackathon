@@ -21,6 +21,11 @@ from src.data_utils import reproject_to_match, s2_cloud_mask
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
+try:
+    from tqdm import tqdm
+except Exception:  # pragma: no cover
+    tqdm = None
+
 S2_PATTERN = re.compile(r"_s2_l2a_(\d{4})_(\d{1,2})\.tif$")
 S1_PATTERN = re.compile(r"_s1_rtc_(\d{4})_(\d{1,2})_(ascending|descending)\.tif$")
 
@@ -641,8 +646,11 @@ def main() -> None:
         logger.info("Building cache for split=%s (%d tiles)", split, total_tiles)
 
         if args.num_workers <= 1:
-            for idx, (tile_id, year_map) in enumerate(tile_items, start=1):
-                if total_tiles > 0:
+            iterator = tile_items
+            if tqdm is not None:
+                iterator = tqdm(tile_items, total=total_tiles, desc=f"cache:{split}")
+            for idx, (tile_id, year_map) in enumerate(iterator, start=1):
+                if tqdm is None and total_tiles > 0:
                     pct = (idx / total_tiles) * 100
                     logger.info("Processing %s (%d/%d, %.1f%%)", tile_id, idx, total_tiles, pct)
 
@@ -659,6 +667,9 @@ def main() -> None:
         else:
             logger.info("Using %d workers for split=%s", args.num_workers, split)
             futures = {}
+            progress = None
+            if tqdm is not None:
+                progress = tqdm(total=total_tiles, desc=f"cache:{split}")
             with ProcessPoolExecutor(max_workers=args.num_workers) as executor:
                 for tile_id, year_map in tile_items:
                     future = executor.submit(
@@ -681,9 +692,14 @@ def main() -> None:
                     except Exception as exc:
                         logger.warning("Tile %s failed: %s", tile_id, exc)
 
-                    if total_tiles > 0:
+                    if progress is not None:
+                        progress.update(1)
+                    elif total_tiles > 0:
                         pct = (idx / total_tiles) * 100
                         logger.info("Completed %s (%d/%d, %.1f%%)", tile_id, idx, total_tiles, pct)
+
+            if progress is not None:
+                progress.close()
 
 
 if __name__ == "__main__":
