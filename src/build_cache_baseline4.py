@@ -77,17 +77,35 @@ def _reproject_array(
     ref_profile: dict,
     resampling: Resampling,
 ) -> np.ndarray:
-    dst = np.zeros((ref_profile["height"], ref_profile["width"]), dtype=np.float32)
-    reproject(
-        source=src_array,
-        destination=dst,
-        src_transform=src_transform,
-        src_crs=src_crs,
-        dst_transform=ref_profile["transform"],
-        dst_crs=ref_profile["crs"],
-        resampling=resampling,
-    )
-    return dst
+    if src_array.ndim == 2:
+        dst = np.zeros((ref_profile["height"], ref_profile["width"]), dtype=np.float32)
+        reproject(
+            source=src_array,
+            destination=dst,
+            src_transform=src_transform,
+            src_crs=src_crs,
+            dst_transform=ref_profile["transform"],
+            dst_crs=ref_profile["crs"],
+            resampling=resampling,
+        )
+        return dst
+
+    if src_array.ndim == 3:
+        bands = src_array.shape[0]
+        dst = np.zeros((bands, ref_profile["height"], ref_profile["width"]), dtype=np.float32)
+        for band_idx in range(bands):
+            reproject(
+                source=src_array[band_idx],
+                destination=dst[band_idx],
+                src_transform=src_transform,
+                src_crs=src_crs,
+                dst_transform=ref_profile["transform"],
+                dst_crs=ref_profile["crs"],
+                resampling=resampling,
+            )
+        return dst
+
+    raise ValueError(f"Unsupported array dimensions for reprojection: {src_array.ndim}")
 
 
 def _compute_index(numerator: np.ndarray, denominator: np.ndarray) -> np.ndarray:
