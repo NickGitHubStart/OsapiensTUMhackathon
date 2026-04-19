@@ -298,61 +298,77 @@ def _load_consensus_labels(
     return labels, weights
 
 
-def _build_feature_names(feature_years: list[int]) -> list[str]:
+def _build_feature_names(
+    feature_years: list[int],
+    use_aef: bool,
+    use_s1: bool,
+    use_s2: bool,
+) -> list[str]:
     names: list[str] = []
 
-    for band in range(64):
-        names.append(f"aef_2020_b{band:02d}")
-
-    for year in feature_years:
-        if year == 2020:
-            continue
+    if use_aef:
         for band in range(64):
-            names.append(f"aef_diff_2020_{year}_b{band:02d}")
-        for band in range(64):
-            names.append(f"aef_diff_prev_{year}_b{band:02d}")
+            names.append(f"aef_2020_b{band:02d}")
 
-    for orbit in ["ascending", "descending"]:
-        names.append(f"s1_{orbit}_mean_2020")
-        names.append(f"s1_{orbit}_std_2020")
-        names.append(f"s1_{orbit}_p10_2020")
+        for year in feature_years:
+            if year == 2020:
+                continue
+            for band in range(64):
+                names.append(f"aef_diff_2020_{year}_b{band:02d}")
+            for band in range(64):
+                names.append(f"aef_diff_prev_{year}_b{band:02d}")
 
-    for year in feature_years:
-        if year == 2020:
-            continue
+    if use_s1:
         for orbit in ["ascending", "descending"]:
-            names.append(f"s1_{orbit}_mean_diff_2020_{year}")
-            names.append(f"s1_{orbit}_std_diff_2020_{year}")
-            names.append(f"s1_{orbit}_p10_diff_2020_{year}")
+            names.append(f"s1_{orbit}_mean_2020")
+            names.append(f"s1_{orbit}_std_2020")
+            names.append(f"s1_{orbit}_p10_2020")
 
-    s2_indices = ["ndvi", "nbr", "ndmi"]
-    s2_stats = ["median", "min", "std"]
+        for year in feature_years:
+            if year == 2020:
+                continue
+            for orbit in ["ascending", "descending"]:
+                names.append(f"s1_{orbit}_mean_diff_2020_{year}")
+                names.append(f"s1_{orbit}_std_diff_2020_{year}")
+                names.append(f"s1_{orbit}_p10_diff_2020_{year}")
 
-    for idx in s2_indices:
-        for stat in s2_stats:
-            names.append(f"s2_{idx}_{stat}_2020")
+    if use_s2:
+        s2_indices = ["ndvi", "nbr", "ndmi"]
+        s2_stats = ["median", "min", "std"]
 
-    for year in feature_years:
-        if year == 2020:
-            continue
         for idx in s2_indices:
             for stat in s2_stats:
-                names.append(f"s2_{idx}_{stat}_diff_2020_{year}")
+                names.append(f"s2_{idx}_{stat}_2020")
+
+        for year in feature_years:
+            if year == 2020:
+                continue
+            for idx in s2_indices:
+                for stat in s2_stats:
+                    names.append(f"s2_{idx}_{stat}_diff_2020_{year}")
 
     return names
 
 
-def _ensure_feature_spec(cache_dir: Path, feature_years: list[int]) -> dict:
+def _ensure_feature_spec(
+    cache_dir: Path,
+    feature_years: list[int],
+    modalities: list[str],
+) -> dict:
     spec_path = cache_dir / "feature_spec.json"
     if spec_path.exists():
         spec = json.loads(spec_path.read_text())
-        if spec.get("feature_years") != feature_years:
+        if spec.get("feature_years") != feature_years or spec.get("modalities") != modalities:
             raise ValueError("Feature years mismatch with existing cache spec.")
         return spec
 
-    feature_names = _build_feature_names(feature_years)
+    use_aef = "aef" in modalities
+    use_s1 = "s1" in modalities
+    use_s2 = "s2" in modalities
+    feature_names = _build_feature_names(feature_years, use_aef, use_s1, use_s2)
     spec = {
         "feature_years": feature_years,
+        "modalities": modalities,
         "feature_names": feature_names,
         "feature_dim": len(feature_names),
         "aef_bands": 64,
@@ -375,6 +391,9 @@ def _build_tile_cache(
     out_dir: Path,
     feature_dim: int,
     force: bool,
+    use_aef: bool,
+    use_s1: bool,
+    use_s2: bool,
 ) -> None:
     out_path = out_dir / f"{tile_id}.npz"
     if out_path.exists() and not force:
@@ -384,144 +403,160 @@ def _build_tile_cache(
     s2_root = data_dir / "sentinel-2" / split
     s1_root = data_dir / "sentinel-1" / split
 
-    s2_files = sorted((s2_root / f"{tile_id}__s2_l2a").glob("*.tif"))
-    s2_2020 = [p for p in s2_files if _parse_s2_date(p) and _parse_s2_date(p)[0] == 2020]
-    if not s2_2020:
-        logger.warning("Skipping %s (%s): missing 2020 Sentinel-2", tile_id, split)
+    s2_files: list[Path] = []
+    if use_s2:
+        s2_files = sorted((s2_root / f"{tile_id}__s2_l2a").glob("*.tif"))
+        s2_2020 = [p for p in s2_files if _parse_s2_date(p) and _parse_s2_date(p)[0] == 2020]
+        if not s2_2020:
+            logger.warning("Skipping %s (%s): missing 2020 Sentinel-2", tile_id, split)
+            return
+    else:
+        s2_2020 = []
+
+    s1_files: list[Path] = []
+    if use_s1:
+        s1_files = sorted((s1_root / f"{tile_id}__s1_rtc").glob(f"{tile_id}__s1_rtc_*.tif"))
+        s1_2020_files = [p for p in s1_files if (_parse_s1_date(p) and _parse_s1_date(p)[0] == 2020)]
+        if not s1_2020_files:
+            logger.warning("Skipping %s (%s): missing 2020 Sentinel-1", tile_id, split)
+            return
+    else:
+        s1_2020_files = []
+
+    ref_profile = None
+    if use_s2 and s2_2020:
+        with rasterio.open(s2_2020[0]) as src:
+            ref_profile = src.profile
+    if ref_profile is None and use_s1 and s1_2020_files:
+        with rasterio.open(s1_2020_files[0]) as src:
+            ref_profile = src.profile
+
+    aef_2020 = None
+    if use_aef:
+        if 2020 not in aef_paths:
+            logger.warning("Skipping %s (%s): missing 2020 AEF", tile_id, split)
+            return
+        with rasterio.open(aef_paths[2020]) as src:
+            aef_2020 = src.read().astype(np.float32)
+            if ref_profile is None:
+                ref_profile = src.profile
+            elif src.crs != ref_profile["crs"] or src.transform != ref_profile["transform"]:
+                aef_2020 = _reproject_array(
+                    aef_2020,
+                    src.transform,
+                    src.crs,
+                    ref_profile,
+                    Resampling.bilinear,
+                )
+
+    if ref_profile is None:
+        logger.warning("Skipping %s (%s): missing reference profile", tile_id, split)
         return
 
-    with rasterio.open(s2_2020[0]) as src:
-        ref_profile = src.profile
-
-    if 2020 not in aef_paths:
-        logger.warning("Skipping %s (%s): missing 2020 AEF", tile_id, split)
-        return
-
-    with rasterio.open(aef_paths[2020]) as src:
-        aef_2020 = src.read().astype(np.float32)
-        aef_2020 = _reproject_array(
-            aef_2020,
-            src.transform,
-            src.crs,
-            ref_profile,
-            Resampling.bilinear,
-        )
-
-    features: list[np.ndarray] = [band for band in aef_2020]
+    features: list[np.ndarray] = []
+    if use_aef and aef_2020 is not None:
+        features.extend([band for band in aef_2020])
 
     aef_prev: np.ndarray | None = None
     prev_year: int | None = None
 
-    for year in years:
-        if year == 2020:
-            aef_prev = aef_2020
-            prev_year = 2020
-            continue
+    if use_aef and aef_2020 is not None:
+        for year in years:
+            if year == 2020:
+                aef_prev = aef_2020
+                prev_year = 2020
+                continue
 
-        path = aef_paths.get(year)
-        if path is None:
-            nan = np.full_like(aef_2020, np.nan, dtype=np.float32)
-            features.extend([band for band in nan])
-            features.extend([band for band in nan])
-            continue
+            path = aef_paths.get(year)
+            if path is None:
+                nan = np.full_like(aef_2020, np.nan, dtype=np.float32)
+                features.extend([band for band in nan])
+                features.extend([band for band in nan])
+                continue
 
-        with rasterio.open(path) as src:
-            aef_year = src.read().astype(np.float32)
-            aef_year = _reproject_array(
-                aef_year,
-                src.transform,
-                src.crs,
-                ref_profile,
-                Resampling.bilinear,
-            )
+            with rasterio.open(path) as src:
+                aef_year = src.read().astype(np.float32)
+                aef_year = _reproject_array(
+                    aef_year,
+                    src.transform,
+                    src.crs,
+                    ref_profile,
+                    Resampling.bilinear,
+                )
 
-        diff_2020 = aef_year - aef_2020
-        if prev_year == year - 1 and aef_prev is not None:
-            diff_prev = aef_year - aef_prev
-        else:
-            diff_prev = np.full_like(aef_2020, np.nan, dtype=np.float32)
+            diff_2020 = aef_year - aef_2020
+            if prev_year == year - 1 and aef_prev is not None:
+                diff_prev = aef_year - aef_prev
+            else:
+                diff_prev = np.full_like(aef_2020, np.nan, dtype=np.float32)
 
-        features.extend([band for band in diff_2020])
-        features.extend([band for band in diff_prev])
-        aef_prev = aef_year
-        prev_year = year
-
-    s1_files = sorted((s1_root / f"{tile_id}__s1_rtc").glob(f"{tile_id}__s1_rtc_*.tif"))
-    s1_by_year: dict[int, list[Path]] = {}
-    for path in s1_files:
-        parsed = _parse_s1_date(path)
-        if parsed is None:
-            continue
-        year, _, _ = parsed
-        s1_by_year.setdefault(year, []).append(path)
+            features.extend([band for band in diff_2020])
+            features.extend([band for band in diff_prev])
+            aef_prev = aef_year
+            prev_year = year
 
     s1_stats_by_year: dict[int, dict[str, dict[str, np.ndarray]]] = {}
-    for year in years:
-        if year not in s1_by_year:
-            continue
-        s1_stats_by_year[year] = _compute_s1_year_stats(s1_by_year[year], ref_profile)
+    s1_2020 = None
+    if use_s1:
+        s1_by_year: dict[int, list[Path]] = {}
+        for path in s1_files:
+            parsed = _parse_s1_date(path)
+            if parsed is None:
+                continue
+            year, _, _ = parsed
+            s1_by_year.setdefault(year, []).append(path)
 
-    if 2020 not in s1_stats_by_year or not all(
-        orbit in s1_stats_by_year[2020] for orbit in ["ascending", "descending"]
-    ):
-        logger.warning("Skipping %s (%s): missing 2020 Sentinel-1", tile_id, split)
-        return
+        for year in years:
+            if year not in s1_by_year:
+                continue
+            s1_stats_by_year[year] = _compute_s1_year_stats(s1_by_year[year], ref_profile)
 
-    s1_2020 = s1_stats_by_year[2020]
-    for orbit in ["ascending", "descending"]:
-        features.append(s1_2020[orbit]["mean"])
-        features.append(s1_2020[orbit]["std"])
-        features.append(s1_2020[orbit]["p10"])
+        if 2020 not in s1_stats_by_year or not all(
+            orbit in s1_stats_by_year[2020] for orbit in ["ascending", "descending"]
+        ):
+            logger.warning("Skipping %s (%s): missing 2020 Sentinel-1", tile_id, split)
+            return
 
-    for year in years:
-        if year == 2020:
-            continue
-        stats = s1_stats_by_year.get(year)
+        s1_2020 = s1_stats_by_year[2020]
         for orbit in ["ascending", "descending"]:
-            if stats is None or orbit not in stats:
-                nan = np.full_like(aef_2020[0], np.nan, dtype=np.float32)
-                features.extend([nan, nan, nan])
-            else:
-                features.append(stats[orbit]["mean"] - s1_2020[orbit]["mean"])
-                features.append(stats[orbit]["std"] - s1_2020[orbit]["std"])
-                features.append(stats[orbit]["p10"] - s1_2020[orbit]["p10"])
+            features.append(s1_2020[orbit]["mean"])
+            features.append(s1_2020[orbit]["std"])
+            features.append(s1_2020[orbit]["p10"])
 
-    s2_by_year: dict[int, list[Path]] = {}
-    for path in s2_files:
-        parsed = _parse_s2_date(path)
-        if parsed is None:
-            continue
-        year, _ = parsed
-        s2_by_year.setdefault(year, []).append(path)
+        for year in years:
+            if year == 2020:
+                continue
+            stats = s1_stats_by_year.get(year)
+            for orbit in ["ascending", "descending"]:
+                if stats is None or orbit not in stats:
+                    nan = np.full((ref_profile["height"], ref_profile["width"]), np.nan, dtype=np.float32)
+                    features.extend([nan, nan, nan])
+                else:
+                    features.append(stats[orbit]["mean"] - s1_2020[orbit]["mean"])
+                    features.append(stats[orbit]["std"] - s1_2020[orbit]["std"])
+                    features.append(stats[orbit]["p10"] - s1_2020[orbit]["p10"])
 
     s2_stats_by_year: dict[int, dict[str, np.ndarray]] = {}
-    for year in years:
-        stats = _compute_s2_year_stats(s2_by_year.get(year, []), ref_profile)
-        if stats is not None:
-            s2_stats_by_year[year] = stats
+    s2_2020 = None
+    if use_s2:
+        s2_by_year: dict[int, list[Path]] = {}
+        for path in s2_files:
+            parsed = _parse_s2_date(path)
+            if parsed is None:
+                continue
+            year, _ = parsed
+            s2_by_year.setdefault(year, []).append(path)
 
-    if 2020 not in s2_stats_by_year:
-        logger.warning("Skipping %s (%s): missing 2020 Sentinel-2", tile_id, split)
-        return
+        for year in years:
+            stats = _compute_s2_year_stats(s2_by_year.get(year, []), ref_profile)
+            if stats is not None:
+                s2_stats_by_year[year] = stats
 
-    s2_2020 = s2_stats_by_year[2020]
-    for key in [
-        "ndvi_median",
-        "ndvi_min",
-        "ndvi_std",
-        "nbr_median",
-        "nbr_min",
-        "nbr_std",
-        "ndmi_median",
-        "ndmi_min",
-        "ndmi_std",
-    ]:
-        features.append(s2_2020[key])
+        if 2020 not in s2_stats_by_year:
+            logger.warning("Skipping %s (%s): missing 2020 Sentinel-2", tile_id, split)
+            return
 
-    for year in years:
-        if year == 2020:
-            continue
-        stats = s2_stats_by_year.get(year)
+        s2_2020 = s2_stats_by_year[2020]
         for key in [
             "ndvi_median",
             "ndvi_min",
@@ -533,11 +568,28 @@ def _build_tile_cache(
             "ndmi_min",
             "ndmi_std",
         ]:
-            if stats is None:
-                nan = np.full_like(aef_2020[0], np.nan, dtype=np.float32)
-                features.append(nan)
-            else:
-                features.append(stats[key] - s2_2020[key])
+            features.append(s2_2020[key])
+
+        for year in years:
+            if year == 2020:
+                continue
+            stats = s2_stats_by_year.get(year)
+            for key in [
+                "ndvi_median",
+                "ndvi_min",
+                "ndvi_std",
+                "nbr_median",
+                "nbr_min",
+                "nbr_std",
+                "ndmi_median",
+                "ndmi_min",
+                "ndmi_std",
+            ]:
+                if stats is None:
+                    nan = np.full((ref_profile["height"], ref_profile["width"]), np.nan, dtype=np.float32)
+                    features.append(nan)
+                else:
+                    features.append(stats[key] - s2_2020[key])
 
     feature_stack = np.stack(features, axis=0).astype(np.float32)
     if feature_stack.shape[0] != feature_dim:
@@ -545,28 +597,34 @@ def _build_tile_cache(
             f"Feature dim mismatch for {tile_id}: {feature_stack.shape[0]} != {feature_dim}"
         )
 
-    ndvi_future = [s2_stats_by_year[y]["ndvi_median"] for y in years if y != 2020 and y in s2_stats_by_year]
-    if ndvi_future:
-        ndvi_min_future = _safe_nan_stat(np.nanmin, np.stack(ndvi_future, axis=0), axis=0)
-        ndvi_drop = s2_2020["ndvi_median"] - ndvi_min_future
+    if use_s2 and s2_2020 is not None:
+        ndvi_future = [s2_stats_by_year[y]["ndvi_median"] for y in years if y != 2020 and y in s2_stats_by_year]
+        if ndvi_future:
+            ndvi_min_future = _safe_nan_stat(np.nanmin, np.stack(ndvi_future, axis=0), axis=0)
+            ndvi_drop = s2_2020["ndvi_median"] - ndvi_min_future
+        else:
+            ndvi_drop = np.full((ref_profile["height"], ref_profile["width"]), np.nan, dtype=np.float32)
     else:
-        ndvi_drop = np.full_like(aef_2020[0], np.nan, dtype=np.float32)
+        ndvi_drop = np.full((ref_profile["height"], ref_profile["width"]), np.nan, dtype=np.float32)
 
-    vv_2020 = 0.5 * (s1_2020["ascending"]["mean"] + s1_2020["descending"]["mean"])
-    vv_future = []
-    for year in years:
-        if year == 2020:
-            continue
-        stats = s1_stats_by_year.get(year)
-        if stats is None or "ascending" not in stats or "descending" not in stats:
-            continue
-        vv_future.append(0.5 * (stats["ascending"]["mean"] + stats["descending"]["mean"]))
+    if use_s1 and s1_2020 is not None:
+        vv_2020 = 0.5 * (s1_2020["ascending"]["mean"] + s1_2020["descending"]["mean"])
+        vv_future = []
+        for year in years:
+            if year == 2020:
+                continue
+            stats = s1_stats_by_year.get(year)
+            if stats is None or "ascending" not in stats or "descending" not in stats:
+                continue
+            vv_future.append(0.5 * (stats["ascending"]["mean"] + stats["descending"]["mean"]))
 
-    if vv_future:
-        vv_min_future = _safe_nan_stat(np.nanmin, np.stack(vv_future, axis=0), axis=0)
-        vv_drop = vv_2020 - vv_min_future
+        if vv_future:
+            vv_min_future = _safe_nan_stat(np.nanmin, np.stack(vv_future, axis=0), axis=0)
+            vv_drop = vv_2020 - vv_min_future
+        else:
+            vv_drop = np.full((ref_profile["height"], ref_profile["width"]), np.nan, dtype=np.float32)
     else:
-        vv_drop = np.full_like(aef_2020[0], np.nan, dtype=np.float32)
+        vv_drop = np.full((ref_profile["height"], ref_profile["width"]), np.nan, dtype=np.float32)
 
     forest_mask = np.ones_like(aef_2020[0], dtype=np.uint8)
 
@@ -602,11 +660,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build baseline4 feature cache.")
     parser.add_argument("--data-dir", default="./data/makeathon-challenge")
     parser.add_argument("--cache-dir", default="./data/makeathon-challenge-cache/baseline4")
+    parser.add_argument("--cache-variant", default="", help="Optional cache subfolder (e.g. s1-only).")
     parser.add_argument("--split", choices=["train", "test", "both"], default="both")
     parser.add_argument("--feature-years", default="")
     parser.add_argument("--min-year", type=int, default=2020)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--max-tiles", type=int, default=0)
+    parser.add_argument(
+        "--feature-set",
+        choices=["all", "s1-only"],
+        default="all",
+        help="Which modalities to include in the cache.",
+    )
     parser.add_argument(
         "--num-workers",
         type=int,
@@ -617,6 +682,19 @@ def main() -> None:
     args = parser.parse_args()
     data_dir = Path(args.data_dir)
     cache_dir = Path(args.cache_dir)
+    if args.cache_variant:
+        cache_dir = cache_dir / args.cache_variant
+
+    if args.feature_set == "s1-only":
+        use_aef = False
+        use_s1 = True
+        use_s2 = False
+        modalities = ["s1"]
+    else:
+        use_aef = True
+        use_s1 = True
+        use_s2 = True
+        modalities = ["aef", "s1", "s2"]
 
     if args.feature_years:
         feature_years = [int(y.strip()) for y in args.feature_years.split(",") if y.strip()]
@@ -627,7 +705,7 @@ def main() -> None:
     if not feature_years or 2020 not in feature_years:
         raise RuntimeError("Feature years must include 2020.")
 
-    spec = _ensure_feature_spec(cache_dir, feature_years)
+    spec = _ensure_feature_spec(cache_dir, feature_years, modalities)
 
     splits = [args.split] if args.split != "both" else ["train", "test"]
     for split in splits:
@@ -676,6 +754,9 @@ def main() -> None:
                     out_dir=out_dir,
                     feature_dim=spec["feature_dim"],
                     force=args.force,
+                    use_aef=use_aef,
+                    use_s1=use_s1,
+                    use_s2=use_s2,
                 )
         else:
             logger.info("Using %d workers for split=%s", args.num_workers, split)
@@ -695,6 +776,9 @@ def main() -> None:
                         out_dir,
                         spec["feature_dim"],
                         args.force,
+                        use_aef,
+                        use_s1,
+                        use_s2,
                     )
                     futures[future] = tile_id
 
