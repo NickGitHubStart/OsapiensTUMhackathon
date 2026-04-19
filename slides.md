@@ -118,20 +118,3 @@ All three submissions below use the **Baseline 3 ensemble** (the 3-model bundle 
 
 **Expected effect:** Cleaner per-pixel probabilities from training on higher-quality labels. Primarily an FPR reduction (fewer "confidently wrong" predictions driven by noisy labels). Expected IoU gain: +2-4 points.
 
----
-
-# Corrections and clarifications I made to your notes
-
-A few things in your original notes that I fixed or clarified in the above:
-
-1. **"first and second: RADD, GLAD-L, GLAD majority vote"** — this applies to all three submissions, not just 1 and 2. The labels used for *training* are the same across submissions; what changed was the *inference/postprocessing* pipeline.
-
-2. **"EPSC 43%"** → EPSG:4326 (the geographic lat/lon coordinate system). This was just a typo worth fixing for slides.
-
-3. **"ensembling of baseline what models"** — clarified that all three submissions use the Baseline 3 ensemble, which itself is 3 XGBoost models (TH-holdout, CO-holdout, all-data) averaged at inference. Submissions 1 and 2 use arithmetic mean averaging; submission 3 switches to geometric mean.
-
-4. **F1 score context for Baseline 3** — called out explicitly that the F1 numbers are not comparable to Baseline 1/2 because they were evaluated on a harder split (cross-region vs same-region). This is important because otherwise the audience may think Baseline 3 is a worse model.
-
-5. **"normalfeature embeddings subtracted from 2020 the last year"** — rephrased as clearer temporal difference descriptions in the Baseline 2 slide.
-
-Let me know if you want the slides tightened further (e.g., shorter bullets for slide display, or longer prose for speaker notes), or if you want me to restructure into a specific slide template format.
