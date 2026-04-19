@@ -1,1 +1,1 @@
-models/xregion_best/*.pt filter=lfs diff=lfs merge=lfs -text
+artifacts-20260418T202923Z-3-001/artifacts/xregion_ensemble/*.pt filter=lfs diff=lfs merge=lfs -text

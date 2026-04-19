@@ -1,11 +1,16 @@
 # Challenge dataset (S3 download target — do not commit)
 data/
-
-# Common alternate download locations
 **/makeathon-challenge/
+**/makeathon-challenge-temporal/
 
-# Trained models / outputs
+# Old/regenerable artifacts
 /artifacts/
+/logs/
+/_archive/
+
+# Heavy model files (>100MB) — tracked via Git LFS only
+**/*.pt
+**/*.joblib
 
 # Python environments
 .venv/
@@ -31,5 +36,3 @@ build/
 # OS
 .DS_Store
 Thumbs.db
-/logs
-

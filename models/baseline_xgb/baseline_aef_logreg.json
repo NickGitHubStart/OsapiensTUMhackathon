@@ -1,0 +1,47 @@
+{
+  "script": "train_baseline.py",
+  "data_dir": "/content/drive/MyDrive/makeathon-challenge",
+  "model_out": "/content/drive/MyDrive/artifacts/baseline_aef_logreg.joblib",
+  "args": {
+    "data_dir": "/content/drive/MyDrive/makeathon-challenge",
+    "max_samples": 200000,
+    "per_tile_samples": 20000,
+    "neg_pos_ratio": 3,
+    "seed": 7,
+    "aug_noise_std": 0.0,
+    "aug_dropout_prob": 0.0,
+    "aug_dropout_frac": 0.1,
+    "model_out": "/content/drive/MyDrive/artifacts/baseline_aef_logreg.joblib"
+  },
+  "loaded_tiles": 96,
+  "total_samples": 3334572,
+  "train_samples": 160000,
+  "val_samples": 40000,
+  "metrics": {
+    "0": {
+      "precision": 0.7961306630371379,
+      "recall": 0.805607476635514,
+      "f1-score": 0.8008410346682314,
+      "support": 20330.0
+    },
+    "1": {
+      "precision": 0.7965822524191888,
+      "recall": 0.7867819013726487,
+      "f1-score": 0.7916517468924241,
+      "support": 19670.0
+    },
+    "accuracy": 0.79635,
+    "macro avg": {
+      "precision": 0.7963564577281633,
+      "recall": 0.7961946890040814,
+      "f1-score": 0.7962463907803278,
+      "support": 40000.0
+    },
+    "weighted avg": {
+      "precision": 0.7963527321157614,
+      "recall": 0.79635,
+      "f1-score": 0.7963222024044783,
+      "support": 40000.0
+    }
+  }
+}

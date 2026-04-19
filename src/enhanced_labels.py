@@ -13,6 +13,12 @@ import numpy as np
 
 from src.data_utils import TileLabels, reproject_to_match
 
+
+# Default location where ``scripts/refine_labels.py`` writes refined per-tile,
+# per-year label TIFFs. Searched lazily by ``load_tile_labels_enhanced`` when
+# ``label_strategy="xregion_refined"``.
+REFINED_LABELS_SUBDIR = "refined_labels"
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,7 +61,25 @@ def load_tile_labels_enhanced(
     - ``xregion``: like ``multi_source`` but tolerates missing GLAD-S2 (Asia tiles).
       Uses majority of available sources (>=2 sources required, >=ceil(n/2) for positive,
       all-zero for negative). Tiles with fewer than 2 available sources return ``None``.
+    - ``xregion_refined``: load pre-computed refined per-(tile, year) labels
+      from ``data_dir / refined_labels / <tile>/<year>.tif`` (uint8: 0=neg,
+      1=pos, 255=invalid). Falls back to ``xregion`` when no refined raster
+      exists for the requested (tile, year).
     """
+    if label_strategy == "xregion_refined":
+        refined = _load_refined_labels(data_dir, tile_id, ref_profile, year)
+        if refined is not None:
+            return refined
+        # Fallback to raw xregion consensus.
+        return load_tile_labels_enhanced(
+            data_dir,
+            tile_id,
+            ref_profile,
+            year=year,
+            forest_mask_dir=forest_mask_dir,
+            label_strategy="xregion",
+        )
+
     labels_dir = data_dir / "labels" / "train"
 
     glads2_alert_p = labels_dir / "glads2" / f"glads2_{tile_id}_alert.tif"
@@ -74,7 +98,8 @@ def load_tile_labels_enhanced(
             return None
     else:
         raise ValueError(
-            f"Unknown label_strategy={label_strategy!r}; use glads2_radd, multi_source, or xregion"
+            f"Unknown label_strategy={label_strategy!r}; use glads2_radd, multi_source, "
+            "xregion, or xregion_refined"
         )
 
     radd_r = reproject_to_match(radd_labels_p, ref_profile)
@@ -148,6 +173,27 @@ def load_tile_labels_enhanced(
     negative = negative & ~positive
 
     return TileLabels(positive=positive, negative=negative)
+
+
+def _load_refined_labels(
+    data_dir: Path,
+    tile_id: str,
+    ref_profile: dict,
+    year: int | None,
+) -> TileLabels | None:
+    """Load the precomputed refined raster for (tile, year) and reproject."""
+    if year is None:
+        return None
+    refined_path = data_dir / REFINED_LABELS_SUBDIR / tile_id / f"{year}.tif"
+    if not refined_path.is_file():
+        return None
+    arr = reproject_to_match(refined_path, ref_profile)
+    # ``reproject_to_match`` returns uint16 (zero-filled outside source). The
+    # refined raster's nodata value is 255 in the source uint8. After
+    # reprojection it stays 255 inside the original footprint and is 0 outside.
+    pos = arr == 1
+    neg = arr == 0
+    return TileLabels(positive=pos, negative=neg)
 
 
 def label_tile_ids_xregion(labels_dir: Path) -> set[str]:
