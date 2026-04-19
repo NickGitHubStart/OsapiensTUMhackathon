@@ -12,7 +12,7 @@ Here's a cleaned-up, slide-ready version. I'll fix a few inaccuracies, clarify w
 
 **Validation F1 (Class 1):** ~0.79 (same-region held-out pixels)
 
-**Notes / speaker:** AEF is a pretrained global foundation model that encodes multimodal satellite information (optical + radar) into 64 dims per pixel per year. Using just one year's embedding as input is the simplest possible starting point.
+
 
 ---
 
@@ -27,7 +27,6 @@ Here's a cleaned-up, slide-ready version. I'll fix a few inaccuracies, clarify w
 
 **Validation F1 (Class 1):** ~0.87 (same-region held-out pixels)
 
-**Notes / speaker:** The jump from 0.79 → 0.87 F1 confirms that *change* between years is the real deforestation signal, not the raw land-cover state. The anchor to 2020 is chosen because the challenge defines deforestation as "forest in 2020, non-forest later."
 
 ---
 
@@ -46,7 +45,6 @@ At inference: probabilities from all three models are averaged.
 - Thailand holdout: ~0.65
 - Colombia holdout: ~0.59
 
-**Notes / speaker:** Unlike Baseline 1/2 which were evaluated on same-region held-out pixels (optimistic), Baseline 3 was evaluated across regions (trained on one, tested on the other) — a realistic estimate for the Africa test set. The lower F1 is not a worse model; it is an honest measurement under harder generalization conditions. Ensembling across regionally-diverse models reduces overfitting to any single region.
 
 ---
 
