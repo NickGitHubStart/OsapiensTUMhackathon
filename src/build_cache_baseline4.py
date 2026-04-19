@@ -641,9 +641,22 @@ def main() -> None:
         if args.max_tiles:
             tile_items = tile_items[: args.max_tiles]
         out_dir = cache_dir / split
+        if not args.force:
+            before = len(tile_items)
+            tile_items = [
+                (tile_id, year_map)
+                for tile_id, year_map in tile_items
+                if not (out_dir / f"{tile_id}.npz").exists()
+            ]
+            skipped_existing = before - len(tile_items)
+            if skipped_existing:
+                logger.info("Skipping %d existing cache files for split=%s", skipped_existing, split)
         total_tiles = len(tile_items)
 
         logger.info("Building cache for split=%s (%d tiles)", split, total_tiles)
+        if total_tiles == 0:
+            logger.info("No tiles to process for split=%s", split)
+            continue
 
         if args.num_workers <= 1:
             iterator = tile_items
